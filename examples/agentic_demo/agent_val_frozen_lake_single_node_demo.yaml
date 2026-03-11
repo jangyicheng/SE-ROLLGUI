@@ -14,7 +14,7 @@ exp_name: "agentic_pipeline"
 seed: 42
 logging_dir: ./output/logs
 output_dir: ./output
-render_save_dir: /data/oss_bucket_0/yali/output/render
+render_save_dir: ./output/render_save
 system_envs:
   USE_MODELSCOPE: '1'
 
@@ -29,9 +29,9 @@ system_envs:
 #    - roll
 #    - baseline
 
-track_with: tensorboard
-tracker_kwargs:
-  log_dir: /data/tensorboard/roll_exp/agentic_frozen_lake
+# track_with: tensorboard
+# tracker_kwargs:
+#   log_dir: ./data/tensorboard/roll_exp/agentic_frozen_lake
 
 checkpoint_config:
   type: file_system
@@ -59,15 +59,16 @@ whiten_advantages: true
 entropy_loss_coef: 0
 max_grad_norm: 1.0
 
-pretrain: Qwen/Qwen2.5-0.5B-Instruct
-reward_pretrain: Qwen/Qwen2.5-0.5B-Instruct
-
+Model: Qwen3-VL-2B-Instruct
+pretrain: /HOME/hitsz_xdeng/hitsz_xdeng_2/Models/${Model}
+reward_pretrain: /HOME/hitsz_xdeng/hitsz_xdeng_2/Models/${Model}
 actor_train:
   model_args:
     flash_attn: fa2
     disable_gradient_checkpointing: false
     dtype: fp16
     model_type: ~
+    freeze_module_prefix: vision_model
   training_args:
     learning_rate: 1.0e-6
     weight_decay: 0
@@ -76,17 +77,10 @@ actor_train:
     warmup_steps: 10
     lr_scheduler_type: cosine
   data_args:
-    template: qwen2_5
+    template: native
   strategy_args:
-    #strategy_name: deepspeed_train
-    #strategy_config: ${deepspeed_zero2}
-    strategy_name: megatron_train
-    strategy_config:
-      tensor_model_parallel_size: 1
-      pipeline_model_parallel_size: 1
-      expert_model_parallel_size: 1
-      use_distributed_optimizer: true
-      recompute_granularity: full
+   strategy_name: deepspeed_train
+   strategy_config: ${deepspeed_zero3}
   device_mapping: list(range(0,1))
   infer_batch_size: 1
 
@@ -103,7 +97,7 @@ actor_infer:
     temperature: 0.99
     num_return_sequences: 1
   data_args:
-    template: qwen2_5
+    template: native
   strategy_args:
     strategy_name: vllm
     strategy_config:
@@ -120,7 +114,7 @@ reference:
     dtype: fp16
     model_type: ~
   data_args:
-    template: qwen2_5
+    template: native
   strategy_args:
     strategy_name: hf_infer
     strategy_config: ~

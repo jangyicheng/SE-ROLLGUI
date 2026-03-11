@@ -11,7 +11,7 @@ RUN pip uninstall -y torch torchvision torch-tensorrt \
     flash_attn transformer-engine \
     cudf dask-cuda cugraph cugraph-service-server cuml raft-dask cugraph-dgl cugraph-pyg dask-cudf
 
-RUN pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124RUN 
 
 RUN pip uninstall -y opencv opencv-python opencv-python-headless && \
     rm -rf /usr/local/lib/python3.10/dist-packages/cv2/ && \

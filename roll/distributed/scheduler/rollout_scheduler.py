@@ -345,6 +345,10 @@ class RolloutScheduler:
 
         self.rollout_task = None
 
+        # manager = GlobalTrajectoryCacheManager.remote(name="global_traj_manager")
+        # cache = GlobalTrajectoryCache.remote(name="global_traj_cache")
+
+
     async def shutdown(self):
         if self.rollout_task is None:
             return

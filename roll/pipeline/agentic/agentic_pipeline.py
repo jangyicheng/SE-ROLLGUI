@@ -129,6 +129,7 @@ class AgenticPipeline(BasePipeline):
             self.set_checkpoint_clusters(self.actor_train)
 
         self.running = RunningMoments()
+        
 
     @torch.no_grad()
     def run(self):

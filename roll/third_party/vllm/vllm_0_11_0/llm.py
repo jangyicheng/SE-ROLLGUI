@@ -246,7 +246,7 @@ class Llm0110(LLM):
                 input_preprocessor = processor.input_preprocessor if processor else self.llm_engine.input_preprocessor
                 preprocessed_inputs = input_preprocessor.preprocess(
                     prompt={"prompt_token_ids": token_ids, "multi_modal_data": multi_modal_data[i]},
-                    lora_request=lora_request,
+                    # lora_request=lora_request,
                 )
                 # in v1, engine does not use a input_processor
                 processed_inputs = (

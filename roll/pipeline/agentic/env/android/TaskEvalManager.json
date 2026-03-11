@@ -1,0 +1,78 @@
+{
+  "last_saved": "2026-03-11T11:08:17.577982Z",
+  "tasks": {
+    "AudioRecorderRecordAudio": {
+      "complete_attempts": 1,
+      "success_count": 1,
+      "failure_count": 0,
+      "average_steps": 5.0,
+      "average_time": 110.39860987663269,
+      "average_success_rate": 1.0
+    },
+    "BrowserDraw": {
+      "complete_attempts": 0,
+      "success_count": 0,
+      "failure_count": 0,
+      "average_steps": 0,
+      "average_time": 0.0,
+      "average_success_rate": 0.0
+    },
+    "ClockStopWatchPausedVerify": {
+      "complete_attempts": 1,
+      "success_count": 1,
+      "failure_count": 0,
+      "average_steps": 3.0,
+      "average_time": 77.25784206390381,
+      "average_success_rate": 1.0
+    },
+    "ContactsAddContact": {
+      "complete_attempts": 1,
+      "success_count": 1,
+      "failure_count": 0,
+      "average_steps": 10.0,
+      "average_time": 254.7923846244812,
+      "average_success_rate": 1.0
+    },
+    "FilesDeleteFile": {
+      "complete_attempts": 0,
+      "success_count": 0,
+      "failure_count": 0,
+      "average_steps": 0,
+      "average_time": 0.0,
+      "average_success_rate": 0.0
+    },
+    "MarkorCreateFolder": {
+      "complete_attempts": 1,
+      "success_count": 0,
+      "failure_count": 1,
+      "average_steps": 10.0,
+      "average_time": 203.40184330940247,
+      "average_success_rate": 0.0
+    },
+    "OsmAndFavorite": {
+      "complete_attempts": 1,
+      "success_count": 0,
+      "failure_count": 1,
+      "average_steps": 13.0,
+      "average_time": 243.17059135437012,
+      "average_success_rate": 0.0
+    },
+    "SystemBluetoothTurnOff": {
+      "complete_attempts": 1,
+      "success_count": 1,
+      "failure_count": 0,
+      "average_steps": 10.0,
+      "average_time": 196.6581928730011,
+      "average_success_rate": 1.0
+    }
+  },
+  "global_stats": {
+    "total_success_count": 4,
+    "total_complete_count": 6,
+    "total_task_types": 8,
+    "attempted_task_types": 6,
+    "global_success_rate": 0.6666666666666666,
+    "average_success_rate": 0.6666666666666666,
+    "average_completions_per_task": 1.0
+  }
+}

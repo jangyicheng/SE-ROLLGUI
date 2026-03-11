@@ -3,6 +3,7 @@ from typing import List, Optional
 
 import torch
 from peft import LoraConfig, TaskType, get_peft_model
+# from transformers import AutoModelForImageTextToText as AutoModelForVision2Seq
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -172,6 +173,8 @@ def load_model(
         model_class = AutoModelForVision2Seq  # image and video
     else:
         model_class = AutoModelForCausalLM  # text
+
+    
     model = model_class.from_pretrained(**init_kwargs)
     if not model_args.disable_gradient_checkpointing:
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})

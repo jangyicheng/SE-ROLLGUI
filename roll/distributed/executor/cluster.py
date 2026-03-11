@@ -37,6 +37,9 @@ class Cluster:
     ):
 
         self.cluster_name = name
+        
+
+
         if isinstance(worker_cls, str):
             worker_cls = safe_import_class(worker_cls)
 

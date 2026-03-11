@@ -1,0 +1,226 @@
+# 测试代码运行用的yaml文件
+
+defaults:
+  - ./config/vl_traj_envs@_here_
+  - ./config/deepspeed_zero@_here_
+  - ./config/deepspeed_zero2@_here_
+  - ./config/deepspeed_zero3@_here_
+  - ./config/deepspeed_zero3_cpuoffload@_here_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+exp_name: "Qwen3-VL"
+seed: 42
+logging_dir: ./output/logs
+output_dir: ./output
+render_save_dir: ./output/render
+system_envs:
+  USE_MODELSCOPE: '1'
+
+track_with: swanlab
+tracker_kwargs:
+  api_key: 4FsBwIEyUhCvOwlPJyr7g
+  project: GUIAgent-Online-RL
+  name: ${exp_name}
+  tags: 
+    - Markor
+    - JustNote
+    - Joplin
+  group: training
+  description: GUI online RL
+  log_dir: roll_exp/android
+
+
+# ----------------------------------------------
+
+# 训练/评估流程配置
+max_steps: 50
+save_steps: 5
+logging_steps: 1
+eval_steps: 2
+resume_from_checkpoint: false
+checkpoint_config:
+  type: file_system
+  output_dir: ckpt/${exp_name}
+
+
+# 批处理大小与序列长度配置
+rollout_batch_size: 24 # the rollout trajectory size
+val_batch_size: 12
+# prompt_length
+# response_length
+sequence_length: 11000
+
+# 分布式训练配置
+# local_rank: 分布式训练中的本地排名（在当前节点内的排名）。
+# num_nodes: 可用于分布式训练的节点（物理服务器）数量。如果设置为 1，则表示在单个节点上进行分布式训练。
+num_gpus_per_node: 1
+
+
+# 调度与请求管理
+# generate_opt_level: 控制 LLM 生成（推理）的优化级别。设置为 0 时，使用基础批次生成接口；设置为 1 时，使用调度器处理请求。
+# is_num_return_sequences_expand: 是否在提示（prompts）中复制 num_return_sequences 次。如果为 True，LLM 会为每个输入提示生成多个独立的响应，而不是只生成一个。
+# max_running_requests: 在 LLM 推理服务器上可以同时处理的最大请求数量。这限制了并行推理的并发度。
+# is_use_additional_prompts: 是否使用除常规批次大小之外的额外提示进行处理。
+# max_additional_running_prompts: 在 batch_size 之外，可以额外运行的提示数量。这可能用于处理一些特殊或低优先级的请求，而不会阻塞主批次。
+
+# PPO算法核心参数
+enable_reference: true
+advantage_clip: 0.2
+ppo_epochs: 4
+# GRPO core config
+adv_estimator: "grpo"
+pg_clip_high: 0.28
+#pg_clip: 0.1
+#dual_clip_loss: True
+init_kl_coef:  0.001
+whiten_advantages: true
+entropy_loss_coef: 0
+max_grad_norm: 1.0
+
+
+
+# 预定义一些模型参数
+# Model: Qwen3-VL-2B-Instruct
+# pretrain: /HOME/hitsz_xdeng/hitsz_xdeng_2/Models/${Model}
+pretrain: /HOME/hitsz_xdeng/hitsz_xdeng_2/.cache/huggingface/hub/models--Qwen--Qwen3-VL-4B-Instruct/snapshots/ebb281ec70b05090aa6165b016eac8ec08e71b17
+
+# lora
+lora_target: o_proj,q_proj,k_proj,v_proj
+lora_rank: 64
+lora_alpha: 64
+
+# 模型参数配置
+actor_train:
+  model_args:
+    attn_implementation: fa2
+    disable_gradient_checkpointing: true # if use lora, set to true; else set to false
+    dtype: bf16
+    lora_target: ${lora_target}
+    lora_rank: ${lora_rank}
+    lora_alpha: ${lora_alpha}
+    model_type: ~
+    freeze_module_prefix: vision_model
+  training_args:
+    learning_rate: 3.0e-6
+    weight_decay: 0
+    per_device_train_batch_size: 1
+    gradient_accumulation_steps: 16
+    warmup_steps: 0
+    lr_scheduler_type: cosine
+  data_args:
+    template: native
+  strategy_args:
+   strategy_name: deepspeed_train
+   strategy_config: ${deepspeed_zero3}
+  device_mapping: list(range(0,1))
+  infer_batch_size: 1 # micro_batch_size (4,32g)
+
+actor_infer:
+  model_args:
+    disable_gradient_checkpointing: true
+    dtype: bf16 # fp16
+    lora_target: ${lora_target}
+    lora_rank: ${lora_rank}
+    lora_alpha: ${lora_alpha}
+  generating_args:
+    max_new_tokens: 512 # single-turn response length
+    top_p: 1.0
+    top_k: 40
+    num_beams: 1
+    temperature: 1.0
+    num_return_sequences: 1
+  data_args:
+    template: native
+  strategy_args:
+    strategy_name: vllm
+    strategy_config:
+      gpu_memory_utilization: 0.8
+      block_size: 16
+      load_format: auto
+      max_model_len: 32768
+  device_mapping: list(range(0,1))
+
+reference:
+  model_args:
+    attn_implementation: fa2
+    disable_gradient_checkpointing: true
+    dtype: bf16 # fp16
+    model_type: ~
+  data_args:
+    template: native
+  strategy_args:
+    strategy_name: hf_infer
+    strategy_config: ~
+  device_mapping: list(range(0,1))
+  infer_batch_size: 1  # micro_batch_size
+
+reward_normalization:
+  grouping: traj_group_id # 可以tags(env_type)/traj_group_id(group)/batch(rollout_batch)... group_by计算reward/adv
+  norm_mean_type: group # batch / group
+  method: mean
+  # norm_std_type: batch
+
+train_env_manager:
+  max_env_num_per_worker: 8 # 每个 worker（Ray Actor）中可同时运行的最大环境数量
+  num_env_groups: 2 # group的数量
+  # under the same group, the env config and env seed are ensured to be equal
+  group_size: 2 # n 个group size指的是每一个group里包含n个env，所以总的env数量是num_env_groups * group_size
+  tags: [AndroidEnv-Train]
+  num_groups_partition: [2] # 这个参数和tags对应，指的是这个tag分配多少个env，总数是num_env_groups
+  group_filter_cls: roll.pipeline.agentic.env_manager.android_env_manager.AndroidEnvGroupFilter # dynamic sampling cls
+
+val_env_manager:
+  max_env_num_per_worker: 8
+  num_env_groups: 2
+  group_size: 2 # should be set to 1 because val temperature is set to 0 and same prompt leads to same output
+  tags: [AndroidEnv-Val-Task]
+  num_groups_partition: [2] # TODO: If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
+# Here, you can override variables defined in the imported envs. max_tokens_per_step: 128 in custom_env.SimpleSokoban
+max_tokens_per_step: 512
+adb_path: /root/android-sdk/platform-tools/adb #我的adb路径
+
+START_CONSOLE_PORT: 5554
+START_GRPC_PORT: 8554
+ENV_NUMS: ${train_env_manager.num_env_groups}*${train_env_manager.group_size}
+
+END_CONSOLE_PORT: ${START_CONSOLE_PORT}+2*${ENV_NUMS}
+END_GRPC_PORT: ${START_GRPC_PORT}+${ENV_NUMS}
+console_ports: list(range(${START_CONSOLE_PORT},${END_CONSOLE_PORT}, 2))
+grpc_ports: list(range(${START_GRPC_PORT},${END_GRPC_PORT}))
+max_actions_per_traj: 14
+
+custom_envs:
+  AndroidEnv-Train:
+    env_type: remote_android
+    max_steps: ${max_actions_per_traj}
+    max_tokens_per_step: ${max_tokens_per_step}
+    env_manager_cls: roll.pipeline.agentic.env_manager.android_env_manager.AndroidTrajEnvManager
+    use_thread_lock: true
+    max_env_step_concurrent: 32
+    env_config:
+      adb_path: ${adb_path}
+      console_ports: ${console_ports}
+      grpc_ports: ${grpc_ports}
+      task: JoplinCreateNote,JoplinDeleteNote
+      task_family: android_world
+      max_image_tokens: 280
+      envs_nums: ${ENV_NUMS}
+  AndroidEnv-Val-Task:
+    env_type: remote_android
+    max_steps: ${max_actions_per_traj}
+    max_tokens_per_step: ${max_tokens_per_step}
+    env_manager_cls: roll.pipeline.agentic.env_manager.android_env_manager.AndroidTrajEnvManager
+    use_thread_lock: true
+    max_env_step_concurrent: 32
+    env_config:
+      adb_path: ${adb_path}
+      console_ports: ${console_ports}
+      grpc_ports: ${grpc_ports}
+      task: JoplinCreateNote,JoplinDeleteNote
+      task_family: android_world
+      max_image_tokens: 280
+      envs_nums: ${ENV_NUMS}

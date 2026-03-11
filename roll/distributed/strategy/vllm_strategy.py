@@ -334,6 +334,12 @@ class VllmStrategy(InferenceStrategy):
                                     lora_name=f"{lora_int_id}", lora_int_id=lora_int_id, lora_path="dummy_lora_path"
                                 )
                             ] * batch_size
+                    
+                    # import inspect
+                    # print("="*40)
+                    # print(inspect.signature(self.model.add_requests))
+                    # print("="*40)  
+                                      
                     self.model.add_requests(
                         request_ids=[request_id],
                         prompt_token_ids=prompt_token_ids,

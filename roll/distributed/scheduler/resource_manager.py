@@ -47,17 +47,29 @@ class ResourceManager:
 
             self.placement_groups = [ray.util.placement_group([bundle]) for bundle in bundles]
             ray.get([pg.ready() for pg in self.placement_groups])
-            gpu_ranks = ray.get([
-                get_visible_gpus.options(
-                    placement_group=pg,
-                    **(
-                        {"num_gpus": self.gpu_per_node}
-                        if current_platform.ray_device_key == "GPU"
-                        else {"resources": {current_platform.ray_device_key: self.gpu_per_node}}
-                    )
-                ).remote(current_platform.device_control_env_var)
-                for pg in self.placement_groups
-            ])
+            
+            try:
+                gpu_ranks = ray.get([
+                    get_visible_gpus.options(
+                        placement_group=pg,
+                        **(
+                            {"num_gpus": self.gpu_per_node}
+                            if current_platform.ray_device_key == "GPU"
+                            else {"resources": {current_platform.ray_device_key: self.gpu_per_node}}
+                        )
+                    ).remote(current_platform.device_control_env_var)
+                    for pg in self.placement_groups
+                ])
+            except Exception as e:
+                print("ray version wrong!")
+                gpu_ranks = ray.get([
+                    get_visible_gpus.options(
+                        placement_group=pg,
+                        num_gpus=self.gpu_per_node
+                    ).remote(current_platform.device_control_env_var)
+                    for pg in self.placement_groups
+                ])
+            
             print(f"gpu ranks: {gpu_ranks}")
             self.node_ranks = ray.get(
                 [get_node_rank.options(placement_group=pg).remote() for pg in self.placement_groups])

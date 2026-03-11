@@ -4,6 +4,7 @@ import time
 from itertools import count
 from typing import Any
 
+import os
 import ray
 import torch
 from codetiming import Timer
@@ -42,7 +43,8 @@ class AgenticRolloutPipeline(BasePipeline):
         )
         self.download_models(self.actor_infer)
         self.tokenizer = default_tokenizer_provider(model_args=self.pipeline_config.actor_train.model_args)
-
+        
+        
         self.rollout_scheduler = ray.remote(RolloutScheduler).remote(
             config=self.pipeline_config,
             env_manager_config=self.pipeline_config.train_env_manager,
@@ -132,8 +134,14 @@ class AgenticRolloutPipeline(BasePipeline):
                             "episode_score": episode_score,
                         }
                     )
-                logger.info(json.dumps(generate_res[:10], ensure_ascii=False))
+                logger.info(json.dumps(generate_res[:3], ensure_ascii=False))
                 logger.info(json.dumps(metrics, ensure_ascii=False))
+
+                # 定义文件路径
+                file_path = "/HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/output/evaluate_result.json"
+                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                with open(file_path, 'w') as f:
+                    json.dump(metrics, f, ensure_ascii=False, indent=4)
 
             logger.info(f"pipeline step {global_step} finished")
             global_step += 1
