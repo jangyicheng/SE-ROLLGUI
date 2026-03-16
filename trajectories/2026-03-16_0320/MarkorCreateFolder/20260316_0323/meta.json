@@ -1,0 +1,10 @@
+{
+    "name": "MarkorCreateFolder",
+    "goal": "Create a new folder in Markor named folder_20260316_112336.",
+    "params": {
+        "folder_name": "folder_20260316_112336",
+        "seed": 42
+    },
+    "initialized": true,
+    "max_steps": 10
+}

@@ -129,7 +129,8 @@ class TrajEnvManager(BaseEnvManager):
                 log_stats = {"generate_time": [], "step_time": [], "current_step": []}
 
                 rollout: DataProto = self.formulate_rollouts(rollout_cache)
-                traj_group_id = f"{self.rollout_cache.tag}_{self.rollout_cache.group_id}_{self.episode_id}_{self.group_seed}"
+                # traj_group_id = f"{self.rollout_cache.tag}_{self.rollout_cache.group_id}_{self.episode_id}_{self.group_seed}"
+                traj_group_id = f"{self.rollout_cache.tag}_{self.rollout_cache.group_id}_{self.episode_id}"
                 traj_id = f"{traj_group_id}_{self.rollout_cache.env_id}"
                 rollout.non_tensor_batch["traj_group_id"] = np.array([traj_group_id] * rollout.batch.batch_size[0], dtype=object)
                 rollout.non_tensor_batch["traj_id"] = np.array([traj_id] * rollout.batch.batch_size[0], dtype=object)
@@ -161,7 +162,7 @@ class TrajEnvManager(BaseEnvManager):
         seed = self.group_seed + self.episode_id
 
         with self.thread_lock, self.env_step_limiter:
-            observation, info = self.env.reset(seed=seed)
+            observation, info = self.env.reset(seed=seed, target_task=self.current_task)
             if observation is None:
                 return None
         self.rollout_cache.history.append({

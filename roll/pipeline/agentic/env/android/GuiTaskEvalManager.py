@@ -13,12 +13,12 @@ import asyncio
 last_save_time = 0.0
 SAVE_INTERVAL_SECONDS = 60.0
 N_TASK = 2
-GROUP_SIZE = 4  # 每次连续分配 GROUP_SIZE 个同类任务，需与训练端 group_size 一致
+GROUP_SIZE = 1  # 每次连续分配 GROUP_SIZE 个同类任务，需与训练端 group_size 一致
 lock = threading.Lock()
 random.seed(42)
 task_stats: Dict[str, Dict] = {}
 initialized = False
-LOG_FILE = "/HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/roll/pipeline/agentic/env/android/TaskEvalManager.json"
+LOG_FILE = "/HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/roll/pipeline/agentic/env/android/GuiTaskEvalManager.json"
 
 # 批次分配状态
 current_batch_task: str = None
@@ -124,7 +124,7 @@ def compute_global_stats():
 
 class InitializeRequest(BaseModel):
     task_list: List[str]
-    group_size: int = 4  # 可在初始化时传入 group_size
+    group_size: int = GROUP_SIZE  # 可在初始化时传入 group_size
 
 
 class CompleteTaskRequest(BaseModel):
@@ -158,25 +158,56 @@ async def health():
 
 @app.post("/initialize")
 async def initialize(req: InitializeRequest):
-    global initialized, GROUP_SIZE
+    # global initialized, GROUP_SIZE
+    # with lock:
+    #     if initialized:
+    #         print("Already initialized")
+    #         return {"message": "Already initialized"}
+    #     GROUP_SIZE = req.group_size
+    #     for task in set(req.task_list):
+    #         if task not in task_stats:
+    #             task_stats[task] = {
+    #                 'assigned': 0,
+    #                 'total_attempts': 0,
+    #                 'complete_attempts': 0,
+    #                 'success_count': 0,
+    #                 'failure_count': 0,
+    #                 'average_steps': 0,
+    #                 'average_time': 0.0,
+    #                 'average_success_rate': 0.0
+    #             }
+    #     initialized = True
+    
+    global initialized, GROUP_SIZE, current_batch_task, current_batch_remaining
+
+    empty_stats = {
+        'assigned': 0,
+        'total_attempts': 0,
+        'complete_attempts': 0,
+        'success_count': 0,
+        'failure_count': 0,
+        'average_steps': 0,
+        'average_time': 0.0,
+        'average_success_rate': 0.0
+    }
+
     with lock:
         if initialized:
             print("Already initialized")
             return {"message": "Already initialized"}
+
         GROUP_SIZE = req.group_size
+
+        # 可选：只保留本次 task_list
+        task_stats.clear()
+
         for task in set(req.task_list):
-            if task not in task_stats:
-                task_stats[task] = {
-                    'assigned': 0,
-                    'total_attempts': 0,
-                    'complete_attempts': 0,
-                    'success_count': 0,
-                    'failure_count': 0,
-                    'average_steps': 0,
-                    'average_time': 0.0,
-                    'average_success_rate': 0.0
-                }
+            task_stats[task] = dict(empty_stats)
+
+        current_batch_task = None
+        current_batch_remaining = 0
         initialized = True
+        
     return {"message": "Initialized", "group_size": GROUP_SIZE}
 
 

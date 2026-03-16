@@ -1,0 +1,21 @@
+{
+    "name": "FilesDeleteFile",
+    "goal": "Delete the file proud_banana_copy.mp3 from the Android filesystem located in the Recordings folder within the sdk_gphone_x86_64 storage area.",
+    "params": {
+        "file_name": "proud_banana_copy.mp3",
+        "subfolder": "Recordings",
+        "noise_candidates": [
+            "interview_recording.mp3",
+            "lecture_capture.mp3",
+            "memoir_audio.mp3",
+            "meeting_audio.mp3",
+            "brainstorm_session.mp3",
+            "book_reading.mp3",
+            "therapy_session.mp3",
+            "personal_notes.mp3"
+        ],
+        "seed": 42
+    },
+    "initialized": true,
+    "max_steps": 22
+}

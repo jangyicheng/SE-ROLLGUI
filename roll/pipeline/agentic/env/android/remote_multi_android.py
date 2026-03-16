@@ -1,7 +1,13 @@
 import os
 import ast
+import time
+import json
+import requests
 from typing import List
 from dataclasses import dataclass
+from pathlib import Path
+from .remote_android import RemoteAndroidEnv
+
 
 @dataclass
 class env_config:
@@ -9,118 +15,98 @@ class env_config:
     service_url: str
     console_ports: List[int] | str
     grpc_ports: List[int] | str
+    adb_path: str = "/root/android-sdk/platform-tools/adb" # 默认值
 
-# env_configs = [
-#     env_config(
-#         envs_num=256,
-#         service_url="http://server1:18000",
-#         console_ports=list(range(5554, 6066, 2)),
-#         grpc_ports=list(range(8554, 9066, 2)),
-#     ),
-#     env_config(
-#         envs_num=256,
-#         service_url="http://server2:18000",
-#         console_ports=list(range(5554, 6066, 2)),
-#         grpc_ports=list(range(8554, 9066, 2)),
-#     ),
-# ]
 class RemoteMultiAndroidEnv(RemoteAndroidEnv):
-
     def __init__(
         self,
-        adb_path: str = "/root/android-sdk/platform-tools/adb",
         task: str | None = None,
         task_family: str = "android_world",
         max_steps: int = 10,
         group_seed: int = 0,
         max_image_tokens: int = 600,
         env_configs: List[env_config] = None,
+        save_dir: str = "trajectories",
+        group_size: int = 1,
         **kwargs,
     ):
-
-        if env_configs is None or len(env_configs) == 0:
+        if not env_configs:
             raise ValueError("env_configs must be provided")
 
-        self.env_configs = env_configs
         self.env_id = kwargs.get("android_env_id", 0)
-
+        
         # --------------------------------------------------
-        # 1 计算每个 server 的环境范围
+        # 1. 计算当前 env_id 属于哪个 Server 节点
         # --------------------------------------------------
-
         server_index = None
         local_env_id = None
         start = 0
 
         for i, cfg in enumerate(env_configs):
-
             end = start + cfg.envs_num
-
             if start <= self.env_id < end:
                 server_index = i
                 local_env_id = self.env_id - start
                 break
-
             start = end
 
         if server_index is None:
-            raise ValueError(
-                f"env_id {self.env_id} exceeds total envs "
-                f"{sum(c.envs_num for c in env_configs)}"
-            )
+            total_expected = sum(c.envs_num for c in env_configs)
+            raise ValueError(f"env_id {self.env_id} exceeds total configured envs {total_expected}")
 
-        cfg = env_configs[server_index]
+        target_cfg = env_configs[server_index]
 
         # --------------------------------------------------
-        # 2 解析端口
+        # 2. 解析该 Server 节点的端口列表
         # --------------------------------------------------
+        def _parse_ports(ports):
+            if isinstance(ports, list):
+                return ports
 
-        console_ports = (
-            ast.literal_eval(cfg.console_ports)
-            if isinstance(cfg.console_ports, str)
-            else cfg.console_ports
-        )
+            if isinstance(ports, str):
+                ports = ports.strip()
 
-        grpc_ports = (
-            ast.literal_eval(cfg.grpc_ports)
-            if isinstance(cfg.grpc_ports, str)
-            else cfg.grpc_ports
-        )
+                try:
+                    parsed = ast.literal_eval(ports)
+                    if isinstance(parsed, (list, tuple)):
+                        return list(parsed)
+                except Exception:
+                    pass
 
-        if not console_ports or not grpc_ports:
-            raise ValueError("console_ports and grpc_ports must be provided")
+                if ports.startswith("range"):
+                    return list(eval(ports))
 
-        if len(console_ports) != len(grpc_ports):
-            raise ValueError("console_ports and grpc_ports length mismatch")
+                if ports.startswith("list(range"):
+                    return list(eval(ports))
 
-        if local_env_id >= len(console_ports):
-            raise ValueError(
-                f"local_env_id {local_env_id} exceeds available ports "
-                f"{len(console_ports)}"
-            )
+            raise ValueError(f"Unsupported ports format: {ports}")
+        c_ports = _parse_ports(target_cfg.console_ports)
+        g_ports = _parse_ports(target_cfg.grpc_ports)
+
+        if len(c_ports) != len(g_ports):
+            raise ValueError(f"Server {server_index} console/grpc ports length mismatch")
+
+        # 映射到具体的端口
+        # 使用取模以防 envs_num 大于实际端口数（实现复用）或者直接索引
+        idx = local_env_id % len(c_ports)
+        selected_console = c_ports[idx]
+        selected_grpc = g_ports[idx]
 
         # --------------------------------------------------
-        # 3 选择当前 env 的端口
+        # 3. 调用父类初始化 (父类负责轨迹存储逻辑)
         # --------------------------------------------------
-
-        console_port = console_ports[local_env_id]
-        grpc_port = grpc_ports[local_env_id]
-
-        service_url = cfg.service_url.rstrip("/")
-
-        # --------------------------------------------------
-        # 4 调用父类初始化
-        # --------------------------------------------------
-
+        # 注意：这里 console_ports 传的是单元素列表，因为子类已经算好了确切端口
         super().__init__(
-            adb_path=adb_path,
-            console_ports=[console_port],
-            grpc_ports=[grpc_port],
+            adb_path=target_cfg.adb_path,  # 从 config 传入
+            console_ports=[selected_console],
+            grpc_ports=[selected_grpc],
             task=task,
             task_family=task_family,
             max_steps=max_steps,
             group_seed=group_seed,
             max_image_tokens=max_image_tokens,
-            service_url=service_url,
+            service_url=target_cfg.service_url,
+            save_dir=save_dir,
+            group_size=group_size,
             **kwargs,
         )

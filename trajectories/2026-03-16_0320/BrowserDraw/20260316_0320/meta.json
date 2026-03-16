@@ -1,0 +1,10 @@
+{
+    "name": "BrowserDraw",
+    "goal": "Open the file task.html in Downloads in the file manager; when prompted open it with Chrome. Then create a drawing using the three colors shown at the top and hit submit.",
+    "params": {
+        "browser_task_seed": 2746317213,
+        "seed": 42
+    },
+    "initialized": true,
+    "max_steps": 20
+}

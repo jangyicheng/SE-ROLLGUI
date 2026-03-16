@@ -1,0 +1,170 @@
+{
+    "name": "RecipeAddMultipleRecipes",
+    "goal": "Add the following recipes into the Broccoli app:\nRecipe: Lemon Garlic Tilapia\n description: A quick and easy meal, perfect for busy weekdays.\n servings: 3-4 servings\n preparationTime: 45 mins\n ingredients: varies\n directions: Sauté tilapia in butter, add lemon juice and garlic. Serve with steamed vegetables. Try adding a pinch of your favorite spices for extra flavor.\n\nRecipe: Tomato Basil Bruschetta\n description: An ideal recipe for experimenting with different flavors and ingredients.\n servings: 8 servings\n preparationTime: 20 mins\n ingredients: optional ingredients\n directions: Top sliced baguette with a mix of chopped tomatoes, basil, garlic, olive oil, salt, and pepper. Garnish with fresh herbs for a more vibrant taste.\n\nRecipe: Greek Salad Pita Pockets\n description: A quick and easy meal, perfect for busy weekdays.\n servings: 1 serving\n preparationTime: 45 mins\n ingredients: various amounts\n directions: Fill pita pockets with lettuce, cucumber, tomato, feta, olives, and Greek dressing. Try adding a pinch of your favorite spices for extra flavor.\n",
+    "params": {
+        "row_objects": [
+            {
+                "title": "Lemon Garlic Tilapia",
+                "description": "A quick and easy meal, perfect for busy weekdays.",
+                "servings": "3-4 servings",
+                "preparationTime": "45 mins",
+                "source": "",
+                "ingredients": "varies",
+                "directions": "Sauté tilapia in butter, add lemon juice and garlic. Serve with steamed vegetables. Try adding a pinch of your favorite spices for extra flavor.",
+                "favorite": 0,
+                "imageName": "",
+                "recipeId": -1
+            },
+            {
+                "title": "Tomato Basil Bruschetta",
+                "description": "An ideal recipe for experimenting with different flavors and ingredients.",
+                "servings": "8 servings",
+                "preparationTime": "20 mins",
+                "source": "",
+                "ingredients": "optional ingredients",
+                "directions": "Top sliced baguette with a mix of chopped tomatoes, basil, garlic, olive oil, salt, and pepper. Garnish with fresh herbs for a more vibrant taste.",
+                "favorite": 0,
+                "imageName": "",
+                "recipeId": -1
+            },
+            {
+                "title": "Greek Salad Pita Pockets",
+                "description": "A quick and easy meal, perfect for busy weekdays.",
+                "servings": "1 serving",
+                "preparationTime": "45 mins",
+                "source": "",
+                "ingredients": "various amounts",
+                "directions": "Fill pita pockets with lettuce, cucumber, tomato, feta, olives, and Greek dressing. Try adding a pinch of your favorite spices for extra flavor.",
+                "favorite": 0,
+                "imageName": "",
+                "recipeId": -1
+            }
+        ],
+        "noise_row_objects": [
+            {
+                "title": "Garlic Butter Shrimp",
+                "description": "A quick and easy meal, perfect for busy weekdays.",
+                "servings": "8 servings",
+                "preparationTime": "45 mins",
+                "source": "",
+                "ingredients": "to your liking",
+                "directions": "Sauté shrimp in butter and minced garlic until pink. Sprinkle with parsley and serve with lemon wedges. Garnish with fresh herbs for a more vibrant taste.",
+                "favorite": 0,
+                "imageName": "",
+                "recipeId": -1
+            },
+            {
+                "title": "Kale and Quinoa Salad",
+                "description": "A delicious and healthy choice for any time of the day.",
+                "servings": "2 servings",
+                "preparationTime": "4 hrs",
+                "source": "",
+                "ingredients": "quantities to taste",
+                "directions": "Toss chopped kale, cooked quinoa, dried cranberries, sliced almonds, and feta cheese with a lemon vinaigrette. Garnish with fresh herbs for a more vibrant taste.",
+                "favorite": 0,
+                "imageName": "",
+                "recipeId": -1
+            },
+            {
+                "title": "Spicy Tuna Wraps",
+                "description": "A quick and easy meal, perfect for busy weekdays.",
+                "servings": "6 servings",
+                "preparationTime": "2 hrs",
+                "source": "",
+                "ingredients": "varies",
+                "directions": "Mix canned tuna with mayo and sriracha. Spread on tortillas, add lettuce and cucumber slices, roll up. Feel free to substitute with ingredients you have on hand.",
+                "favorite": 0,
+                "imageName": "",
+                "recipeId": -1
+            },
+            {
+                "title": "Spinach and Feta Stuffed Chicken",
+                "description": "A delicious and healthy choice for any time of the day.",
+                "servings": "1 serving",
+                "preparationTime": "20 mins",
+                "source": "",
+                "ingredients": "as per recipe",
+                "directions": "Stuff chicken breasts with a mixture of spinach, feta, garlic, and herbs. Bake until chicken is cooked through. Feel free to substitute with ingredients you have on hand.",
+                "favorite": 0,
+                "imageName": "",
+                "recipeId": -1
+            },
+            {
+                "title": "Pan-Seared Salmon with Quinoa",
+                "description": "A delicious and healthy choice for any time of the day.",
+                "servings": "8 servings",
+                "preparationTime": "1 hrs",
+                "source": "",
+                "ingredients": "flexible ingredients",
+                "directions": "Pan-sear salmon fillets until crispy. Serve over cooked quinoa with a side of steamed asparagus. Try adding a pinch of your favorite spices for extra flavor.",
+                "favorite": 0,
+                "imageName": "",
+                "recipeId": -1
+            },
+            {
+                "title": "Baked Cod with Lemon and Dill",
+                "description": "An ideal recipe for experimenting with different flavors and ingredients.",
+                "servings": "1 serving",
+                "preparationTime": "3 hrs",
+                "source": "",
+                "ingredients": "various amounts",
+                "directions": "Place cod fillets in a baking dish, season with lemon juice, dill, salt, and pepper. Bake until fish flakes easily. Try adding a pinch of your favorite spices for extra flavor.",
+                "favorite": 0,
+                "imageName": "",
+                "recipeId": -1
+            },
+            {
+                "title": "Quinoa Salad with Vegetables",
+                "description": "An ideal recipe for experimenting with different flavors and ingredients.",
+                "servings": "8 servings",
+                "preparationTime": "2 hrs",
+                "source": "",
+                "ingredients": "to preference",
+                "directions": "Mix cooked quinoa with diced vegetables, feta cheese, and a lemon olive oil dressing. Garnish with fresh herbs for a more vibrant taste.",
+                "favorite": 0,
+                "imageName": "",
+                "recipeId": -1
+            },
+            {
+                "title": "Pesto Pasta with Peas",
+                "description": "A quick and easy meal, perfect for busy weekdays.",
+                "servings": "2 servings",
+                "preparationTime": "1 hrs",
+                "source": "",
+                "ingredients": "as desired",
+                "directions": "Cook pasta, stir in pesto sauce and cooked peas. Add Parmesan cheese before serving. Try adding a pinch of your favorite spices for extra flavor.",
+                "favorite": 0,
+                "imageName": "",
+                "recipeId": -1
+            },
+            {
+                "title": "Zucchini Noodles with Pesto",
+                "description": "A quick and easy meal, perfect for busy weekdays.",
+                "servings": "6 servings",
+                "preparationTime": "1 hrs",
+                "source": "",
+                "ingredients": "to your liking",
+                "directions": "Spiralize zucchini into noodles, sauté with garlic, then mix with pesto sauce. Top with grated Parmesan cheese. Feel free to substitute with ingredients you have on hand.",
+                "favorite": 0,
+                "imageName": "",
+                "recipeId": -1
+            },
+            {
+                "title": "Caprese Salad Skewers",
+                "description": "A quick and easy meal, perfect for busy weekdays.",
+                "servings": "3-4 servings",
+                "preparationTime": "2 hrs",
+                "source": "",
+                "ingredients": "to your liking",
+                "directions": "Thread cherry tomatoes, basil leaves, and mozzarella balls onto skewers. Drizzle with balsamic glaze. Try adding a pinch of your favorite spices for extra flavor.",
+                "favorite": 0,
+                "imageName": "",
+                "recipeId": -1
+            }
+        ],
+        "text_representation_type": "text_block",
+        "seed": 42
+    },
+    "initialized": true,
+    "max_steps": 60
+}

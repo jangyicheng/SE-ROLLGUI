@@ -1,0 +1,9 @@
+{
+    "name": "ClockStopWatchPausedVerify",
+    "goal": "Pause the stopwatch.",
+    "params": {
+        "seed": 42
+    },
+    "initialized": true,
+    "max_steps": 10
+}

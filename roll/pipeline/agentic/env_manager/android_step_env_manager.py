@@ -22,7 +22,8 @@ from roll.pipeline.agentic.env_manager.base_env_manager import (
     BaseEnvManager,
     RolloutCache,
 )
-from roll.pipeline.agentic.env_manager.traj_env_manager import TrajEnvManager
+# from roll.pipeline.agentic.env_manager.traj_env_manager import TrajEnvManager
+from roll.pipeline.agentic.env_manager.gui_traj_env_manager import TrajEnvManager
 from roll.pipeline.agentic.llm_proxy import BaseLLMProxy, create_llm_proxy
 from roll.utils.constants import GenerateStopReason
 from roll.utils.env_action_limiter import get_global_limiter
@@ -140,9 +141,6 @@ class AndroidStepEnvManager(TrajEnvManager):
 
         self.trajectory_cache: Optional[RolloutCache] = None
         
-        
-        # self.trajectory_cache_manager = ray.get_actor("global_traj_manager")
-        # self.trajectory_cache_actor   = ray.get_actor("global_traj_cache")
     @property
     def task(self):
         return self.env.task
@@ -258,8 +256,6 @@ class AndroidStepEnvManager(TrajEnvManager):
         """
         if "observation" in rollout_cache.history[-1]:
             rollout_cache.history.pop(-1)
-        # rollout_cache = self.get_best_trajectory(rollout=rollout_cache)
-        # self.save_trajectory(rollout=rollout_cache)
         
         samples: List[DataProto] = []
         episode_score = sum([i["reward"] for i in self.rollout_cache.history])
@@ -341,68 +337,13 @@ class AndroidStepEnvManager(TrajEnvManager):
         batch.meta_info = {"metrics": env_metric}
         
         # 保存 DataProto 到全局轨迹缓存
-        # try:
-        #     self.save_trajectory(rollout=batch)
-        # except Exception as e:
-        #     self.logger.debug(f"save_trajectory failed: {e}")        
+        try:
+            self.save_trajectory(rollout=batch)
+        except Exception as e:
+            self.logger.debug(f"save_trajectory failed: {e}")        
 
         return batch
 
-    def run_rollout_loop(self, data: DataProto):
-        """
-        1. Each time run_rollout_loop is called,
-        it will continuously play episodes until it receives a command that data collection is complete.
-        The seed needs to be reset to ensure consistency across all groups.
-
-        Seed update logic:
-        group_seed = base_seed + group_id
-        episode_seed = group_seed + episode_id
-
-        trajectory_id: f"{group_id}_{episode_id}_{episode_seed}"
-        """
-        assert "seed" in data.meta_info
-        self.running = True
-        self.group_seed = data.meta_info["seed"] + self.env_config["group_seed"]
-        rollout_cache: RolloutCache = self.reset()
-        start_step = self.current_step
-
-        log_stats = {"generate_time": [], "step_time": [], "current_step": []}
-
-        while self.running and rollout_cache is not None:
-            with Timer(name="generate", logger=None) as generate_timer:
-                lm_output: DataProto = self.make_decision(rollout_cache)
-                stop_reason = lm_output.meta_info.pop("stop_reason")
-            log_stats["current_step"].append(self.current_step)
-            log_stats["generate_time"].append(generate_timer.last)
-
-            with Timer(name="step", logger=None) as step_timer:
-                if stop_reason == GenerateStopReason.FINISH:
-                    rollout_cache: RolloutCache = self.step(lm_output)
-            log_stats["step_time"].append(step_timer.last)
-
-            if self.running and (rollout_cache.terminated or stop_reason == GenerateStopReason.MAX_LENGTH):
-                self.logger.debug(
-                    f"group_id: {self.env_config['group_id']} env_id: {self.env_config['env_id']} episode_id: {self.episode_id} start_step {start_step} gen_stats: {log_stats}"
-                )
-                log_stats = {"generate_time": [], "step_time": [], "current_step": []}
-
-                rollout: DataProto = self.formulate_rollouts(rollout_cache)
-                traj_group_id = (
-                    f"{self.rollout_cache.tag}_{self.rollout_cache.group_id}_{self.episode_id}_{self.group_seed}"
-                )
-                traj_id = f"{traj_group_id}_{self.rollout_cache.env_id}"
-                rollout.non_tensor_batch["traj_group_id"] = np.array(
-                    [traj_group_id] * rollout.batch.batch_size[0], dtype=object
-                )
-                rollout.non_tensor_batch["traj_id"] = np.array([traj_id] * rollout.batch.batch_size[0], dtype=object)
-                ray.get(
-                    self.output_queue.put.remote(self.env_config["group_id"], self.episode_id, start_step, rollout)
-                )
-
-                rollout_cache = self.reset()
-                start_step = self.current_step
-
-        ray.get(self.output_queue.put.remote(self.env_config["group_id"], self.episode_id, start_step, None))
 
 class AndroidEnvGroupFilter:
     def __init__(self, config: AgenticConfig, env_manager_config: EnvManagerConfig, mode: str):

@@ -1,0 +1,10 @@
+{
+    "name": "OsmAndFavorite",
+    "goal": "Add a favorite location marker for 47.1303814, 9.5930117 in the OsmAnd maps app.",
+    "params": {
+        "location": "47.1303814, 9.5930117",
+        "seed": 42
+    },
+    "initialized": true,
+    "max_steps": 13
+}
