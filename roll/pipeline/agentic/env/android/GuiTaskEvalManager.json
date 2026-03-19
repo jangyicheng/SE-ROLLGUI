@@ -1,118 +1,38 @@
 {
-  "last_saved": "2026-03-16T03:28:08.079407Z",
+  "last_saved": "2026-03-19T13:28:32.938475Z",
   "tasks": {
-    "AudioRecorderRecordAudio": {
-      "complete_attempts": 1,
-      "success_count": 1,
-      "failure_count": 0,
-      "average_steps": 5.0,
-      "average_time": 90.34973239898682,
-      "average_success_rate": 1.0
-    },
-    "BrowserDraw": {
-      "complete_attempts": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "average_steps": 0,
-      "average_time": 0.0,
-      "average_success_rate": 0.0
-    },
-    "CameraTakePhoto": {
-      "complete_attempts": 1,
-      "success_count": 1,
-      "failure_count": 0,
-      "average_steps": 3.0,
-      "average_time": 67.91354656219482,
-      "average_success_rate": 1.0
-    },
-    "ClockStopWatchPausedVerify": {
-      "complete_attempts": 1,
-      "success_count": 1,
-      "failure_count": 0,
-      "average_steps": 3.0,
-      "average_time": 61.989054441452026,
-      "average_success_rate": 1.0
-    },
-    "ContactsAddContact": {
-      "complete_attempts": 1,
-      "success_count": 0,
-      "failure_count": 1,
-      "average_steps": 12.0,
-      "average_time": 278.4406707286835,
-      "average_success_rate": 0.0
-    },
-    "ExpenseAddMultiple": {
-      "complete_attempts": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "average_steps": 0,
-      "average_time": 0.0,
-      "average_success_rate": 0.0
-    },
-    "FilesDeleteFile": {
-      "complete_attempts": 1,
-      "success_count": 1,
-      "failure_count": 0,
-      "average_steps": 9.0,
-      "average_time": 180.85649943351746,
-      "average_success_rate": 1.0
-    },
-    "MarkorCreateFolder": {
-      "complete_attempts": 1,
-      "success_count": 1,
-      "failure_count": 0,
-      "average_steps": 5.0,
-      "average_time": 104.54007339477539,
-      "average_success_rate": 1.0
-    },
     "OsmAndFavorite": {
       "complete_attempts": 1,
       "success_count": 0,
       "failure_count": 1,
-      "average_steps": 13.0,
-      "average_time": 236.8540117740631,
+      "average_steps": 7.0,
+      "average_time": 238.8761065006256,
       "average_success_rate": 0.0
     },
-    "RecipeAddMultipleRecipes": {
-      "complete_attempts": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "average_steps": 0,
-      "average_time": 0.0,
-      "average_success_rate": 0.0
-    },
-    "SimpleCalendarAddOneEvent": {
-      "complete_attempts": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "average_steps": 0,
-      "average_time": 0.0,
-      "average_success_rate": 0.0
-    },
-    "SystemBluetoothTurnOff": {
+    "OsmAndTrack": {
       "complete_attempts": 1,
       "success_count": 0,
       "failure_count": 1,
-      "average_steps": 10.0,
-      "average_time": 172.00123071670532,
+      "average_steps": 7.0,
+      "average_time": 225.47311687469482,
       "average_success_rate": 0.0
     },
-    "VlcCreatePlaylist": {
-      "complete_attempts": 0,
-      "success_count": 0,
+    "RetroPlayingQueue": {
+      "complete_attempts": 1,
+      "success_count": 1,
       "failure_count": 0,
-      "average_steps": 0,
-      "average_time": 0.0,
-      "average_success_rate": 0.0
+      "average_steps": 9.0,
+      "average_time": 213.33128309249878,
+      "average_success_rate": 1.0
     }
   },
   "global_stats": {
-    "total_success_count": 5,
-    "total_complete_count": 8,
-    "total_task_types": 13,
-    "attempted_task_types": 8,
-    "global_success_rate": 0.625,
-    "average_success_rate": 0.625,
+    "total_success_count": 1,
+    "total_complete_count": 3,
+    "total_task_types": 14,
+    "attempted_task_types": 3,
+    "global_success_rate": 0.3333333333333333,
+    "average_success_rate": 0.3333333333333333,
     "average_completions_per_task": 1.0
   }
 }

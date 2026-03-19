@@ -10,8 +10,41 @@ import json
 from PIL import Image
 from datetime import datetime
 from .tasks import TASK_LIST
-
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import functools
 logger = get_logger()
+
+
+def log_time_on_error(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            elapsed = time.perf_counter() - start
+            print(f"[{func.__name__}] failed after {elapsed:.2f}s: {e}")
+            raise
+    return wrapper
+
+
+TASK_LIST = [
+    "SimpleCalendarAddOneEventInTwoWeeks",
+    "ExpenseAddMultipleFromMarkor",
+    "RetroCreatePlaylist",
+    "RetroPlaylistDuration",
+    "RetroPlayingQueue",
+    "OsmAndMarker",
+    "SimpleSmsSendReceivedAddress",
+    "MarkorMergeNotes",
+    "MarkorCreateNoteAndSms",
+    "OsmAndFavorite",
+    "OsmAndTrack", 
+    "RecipeAddMultipleRecipes",
+    "RecipeAddMultipleRecipesFromImage",
+    "RecipeAddMultipleRecipesFromMarkor2",   
+    ]
+
 
 
 class RemoteAndroidEnv(Env):
@@ -68,6 +101,36 @@ class RemoteAndroidEnv(Env):
         self.task = None
         
 
+
+    @retry(
+        stop=stop_after_attempt(3),  # 最多尝试3次
+        wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避等待
+        retry=retry_if_exception_type((requests.exceptions.RequestException, ValueError))  # 捕获网络异常和JSON解析异常
+    )
+    @log_time_on_error
+    def call_init(self,payload):
+        return requests.post(f"{self.service_url}/init", json=payload, timeout=90)
+    
+    @retry(
+        stop=stop_after_attempt(3),  # 最多尝试3次
+        wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避等待
+        retry=retry_if_exception_type((requests.exceptions.RequestException, ValueError))  # 捕获网络异常和JSON解析异常
+    )
+    @log_time_on_error
+    def call_reset(self, payload):
+        resp = requests.post(f"{self.service_url}/reset", json=payload, timeout=180)
+        return resp.json()
+    
+    @retry(
+        stop=stop_after_attempt(3),  # 最多尝试3次
+        wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避等待
+        retry=retry_if_exception_type((requests.exceptions.RequestException, ValueError))  # 捕获网络异常和JSON解析异常
+    )
+    @log_time_on_error
+    def call_step(self, payload):
+        resp = requests.post(f"{self.service_url}/step", json=payload, timeout=180)
+        return resp.json()
+
     def _init_server(self, adb_path, max_image_tokens):
         payload = {
             "console_port": self.console_port,
@@ -76,7 +139,8 @@ class RemoteAndroidEnv(Env):
             "adb_path": adb_path,
             "max_image_tokens": max_image_tokens
         }
-        resp = requests.post(f"{self.service_url}/init", json=payload, timeout=60)
+        # resp = requests.post(f"{self.service_url}/init", json=payload, timeout=60)
+        resp = self.call_init(payload)
         if resp.status_code != 200:
             raise RuntimeError(f"Server init failed: {resp.text}")
 
@@ -108,6 +172,9 @@ class RemoteAndroidEnv(Env):
         with open(self.current_task_dir / "steps.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(step_info, ensure_ascii=False) + "\n")
 
+
+
+
     def reset(self, go_home: bool = True, seed: int | None = None , target_task: str | None = None):
         super().reset(seed=seed)
         # 从 TaskManager 获取新任务
@@ -128,12 +195,13 @@ class RemoteAndroidEnv(Env):
             "task_family": self.task_family
         }
         
-        resp = requests.post(f"{self.service_url}/reset", json=payload)
-        data = resp.json()
+        # resp = requests.post(f"{self.service_url}/reset", json=payload)
+        # data = resp.json()
+        data = self.call_reset(payload)
         
         self.current_obs = self._decode_obs(data)
         self.task = data["task"] # 包含任务名、目标等
-        self.max_steps = self.task.get("max_steps", self.max_steps)
+        self.max_steps = min(self.task.get("max_steps", self.max_steps), self.max_steps)
 
         # --- 初始化轨迹目录 ---
         task_name = self.task.get("name", "unknown_task")
@@ -160,16 +228,19 @@ class RemoteAndroidEnv(Env):
             "action": action
         }
         
-        resp = requests.post(f"{self.service_url}/step", json=payload)
-        if resp.status_code != 200:
-            return None, 0.0, True, None, {"error": resp.text}
+        # resp = requests.post(f"{self.service_url}/step", json=payload)
+        data = self.call_step(payload)
+        
+        # if resp.status_code != 200:
+        #     return None, 0.0, True, None, {"error": resp.text}
+        # data = resp.json()
             
-        data = resp.json()
+        
         obs_np = self._decode_obs(data)
         self.current_obs = obs_np
         self.current_steps += 1
         
-        terminate = data.get("terminate", False) or (self.current_steps >= self.max_steps)
+        terminate = data.get("terminate", False) or (self.current_steps >= self.max_steps) 
         
         # --- 存储轨迹 ---
         self._save_step_data(self.current_steps, obs_np, action, ai_response)

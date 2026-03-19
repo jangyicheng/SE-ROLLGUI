@@ -1,9 +1,0 @@
-{
-    "name": "CameraTakePhoto",
-    "goal": "Take one photo.",
-    "params": {
-        "seed": 42
-    },
-    "initialized": true,
-    "max_steps": 10
-}

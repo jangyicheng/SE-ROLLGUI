@@ -32,6 +32,10 @@ class GroupData:
     running_rollouts: int = 0
 
 
+# 请你恢复使用GroupQueue的方式，但仍然保持动态分配 group_id 的 GroupQueueManager，仅在现有的代码上加入下面几点功能：
+# 1. 恢复功能：为每个group对应的任务均分配一个GroupQueue，并为其中的GroupData赋予准确的episode_id
+# 2. 恢复功能：使得GroupQueueManager能够根据async_generation_ratio去管理数据的过时性
+
 @ray.remote
 class GroupQueueManager:
     """
@@ -59,7 +63,6 @@ class GroupQueueManager:
         else:
             self.async_generation_ratio = 0
 
-        # 动态 group 管理
         # 动态 group 管理
         self.next_group_id = 0
         self.groups: Dict[int, GroupData] = {}  # group_id -> GroupData

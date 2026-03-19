@@ -1,9 +1,0 @@
-{
-    "name": "AudioRecorderRecordAudio",
-    "goal": "Record an audio clip using Audio Recorder app and save it.",
-    "params": {
-        "seed": 42
-    },
-    "initialized": true,
-    "max_steps": 12
-}

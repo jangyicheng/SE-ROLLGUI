@@ -8,14 +8,15 @@ import json
 from contextlib import asynccontextmanager
 from datetime import datetime
 import asyncio
+import hashlib
 
 # 全局变量
 last_save_time = 0.0
-SAVE_INTERVAL_SECONDS = 60.0
-N_TASK = 2
+SAVE_INTERVAL_SECONDS = 30.0
+N_TASK = 5  
 GROUP_SIZE = 1  # 每次连续分配 GROUP_SIZE 个同类任务，需与训练端 group_size 一致
 lock = threading.Lock()
-random.seed(42)
+rng = random.Random(42)
 task_stats: Dict[str, Dict] = {}
 initialized = False
 LOG_FILE = "/HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/roll/pipeline/agentic/env/android/GuiTaskEvalManager.json"
@@ -23,6 +24,17 @@ LOG_FILE = "/HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/roll/pipeline/agentic/
 # 批次分配状态
 current_batch_task: str = None
 current_batch_remaining: int = 0
+
+
+GLOBAL_SEED = 42
+global_step = 0
+
+
+def deterministic_choice(candidates: List[str], seed: int, step: int) -> str:
+    key = f"{seed}-{step}-{'|'.join(sorted(candidates))}"
+    h = hashlib.md5(key.encode()).hexdigest()
+    idx = int(h, 16) % len(candidates)
+    return sorted(candidates)[idx]
 
 
 async def periodic_save():
@@ -85,6 +97,7 @@ def save_task_stats():
                 'average_success_rate': stats['average_success_rate']
             }
             for task, stats in sorted(task_stats.items())
+            if stats['complete_attempts'] >= 1 
         }
         global_stats = compute_global_stats()
         final_data = {
@@ -125,7 +138,7 @@ def compute_global_stats():
 class InitializeRequest(BaseModel):
     task_list: List[str]
     group_size: int = GROUP_SIZE  # 可在初始化时传入 group_size
-
+    seed: int = 42
 
 class CompleteTaskRequest(BaseModel):
     task: str
@@ -145,40 +158,20 @@ class HealthResponse(BaseModel):
     timestamp: float
 
 
-@app.get("/health", response_model=HealthResponse)
-async def health():
-    with lock:
-        return HealthResponse(
-            status="healthy",
-            initialized=initialized,
-            task_count=len(task_stats),
-            timestamp=time.time()
-        )
+# @app.get("/health", response_model=HealthResponse)
+# async def health():
+#     with lock:
+#         return HealthResponse(
+#             status="healthy",
+#             initialized=initialized,
+#             task_count=len(task_stats),
+#             timestamp=time.time()
+#         )
 
 
 @app.post("/initialize")
 async def initialize(req: InitializeRequest):
-    # global initialized, GROUP_SIZE
-    # with lock:
-    #     if initialized:
-    #         print("Already initialized")
-    #         return {"message": "Already initialized"}
-    #     GROUP_SIZE = req.group_size
-    #     for task in set(req.task_list):
-    #         if task not in task_stats:
-    #             task_stats[task] = {
-    #                 'assigned': 0,
-    #                 'total_attempts': 0,
-    #                 'complete_attempts': 0,
-    #                 'success_count': 0,
-    #                 'failure_count': 0,
-    #                 'average_steps': 0,
-    #                 'average_time': 0.0,
-    #                 'average_success_rate': 0.0
-    #             }
-    #     initialized = True
-    
-    global initialized, GROUP_SIZE, current_batch_task, current_batch_remaining
+    global initialized, GROUP_SIZE, current_batch_task, current_batch_remaining, rng
 
     empty_stats = {
         'assigned': 0,
@@ -197,11 +190,16 @@ async def initialize(req: InitializeRequest):
             return {"message": "Already initialized"}
 
         GROUP_SIZE = req.group_size
-
+        rng.seed(req.seed)
+        GLOBAL_SEED = req.seed
+        global_step = 0
         # 可选：只保留本次 task_list
         task_stats.clear()
 
-        for task in set(req.task_list):
+        # for task in set(req.task_list):
+        #     task_stats[task] = dict(empty_stats)
+        unique_tasks = list(dict.fromkeys(req.task_list)) # 防止同名任务
+        for task in unique_tasks:
             task_stats[task] = dict(empty_stats)
 
         current_batch_task = None
@@ -217,7 +215,7 @@ async def get_task():
     任务分配逻辑：每次连续分配 GROUP_SIZE 个同类任务。
     当一个批次分配完毕后，根据调度算法选取下一个任务开启新批次。
     """
-    global current_batch_task, current_batch_remaining
+    global current_batch_task, current_batch_remaining , rng , GLOBAL_SEED , global_step
 
     with lock:
         if not task_stats:
@@ -259,7 +257,10 @@ async def get_task():
             and task_stats[t]['assigned'] == min_assigned
         ]
 
-        selected = random.choice(candidates)
+        # selected = rng.choice(candidates)
+        # selected = sorted(candidates)[0]
+        selected = deterministic_choice(candidates, GLOBAL_SEED, global_step)
+        global_step += 1
 
         # 开启新批次：当前请求算第一个，剩余 GROUP_SIZE - 1 个
         current_batch_task = selected
@@ -290,6 +291,7 @@ async def complete_task(req: CompleteTaskRequest):
         stats['average_steps'] = (stats['average_steps'] * old_complete + req.steps) / stats['complete_attempts'] if stats['complete_attempts'] > 0 else 0
         stats['average_time'] = (stats['average_time'] * old_complete + req.time) / stats['complete_attempts'] if stats['complete_attempts'] > 0 else 0.0
         stats['average_success_rate'] = stats['success_count'] / stats['complete_attempts'] if stats['complete_attempts'] > 0 else 0.0
+    print(f"complete task: {req.task}, success: {req.success}, steps: {req.steps}, time: {req.time:.2f}s")
     return {"message": "Completed"}
 
 
