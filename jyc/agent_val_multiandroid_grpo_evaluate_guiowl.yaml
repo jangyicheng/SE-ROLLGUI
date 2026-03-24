@@ -11,7 +11,7 @@ hydra:
   output_subdir: null
 
 
-Model: Qwen3-VL-8B-Instruct #GUI-Owl-1.5-8B-Instruct # Qwen3-VL-30B-A3B-Instruct # MAI-UI-8B # Qwen3-VL-8B-Thinking #
+Model: GUI-Owl-1.5-8B-Instruct # Qwen3-VL-30B-A3B-Instruct # MAI-UI-8B # Qwen3-VL-8B-Thinking # Qwen3-VL-8B-Instruct #
 exp_name: ${Model}
 seed: 42
 logging_dir: ./output/logs
@@ -35,7 +35,7 @@ system_envs:
 # ----------------------------------------------
 
 # 训练/评估流程配置
-max_steps: 5  
+max_steps: 3 # 
 save_steps: 1
 logging_steps: 1
 eval_steps: 1
@@ -151,7 +151,6 @@ android_servers:
     grpc_ports: list(range(${START_GRPC_PORT}, ${START_GRPC_PORT}+2*${envs_num}, 2))
     adb_path: /root/android-sdk/platform-tools/adb
     group_size: 1
-    n_task: ${max_steps}
 
   server2:
     service_url: http://localhost:18001
@@ -160,13 +159,12 @@ android_servers:
     grpc_ports: list(range(${START_GRPC_PORT}, ${START_GRPC_PORT}+2*${envs_num}, 2))
     adb_path: /root/android-sdk/platform-tools/adb
     group_size: 1
-    n_task: ${max_steps}
 
 android_world: &android_world
   env_type: remote_multi_android
   max_steps: ${max_actions_per_traj}
   max_tokens_per_step: ${max_tokens_per_step}
-  env_manager_cls: roll.pipeline.agentic.env_manager.android_step_env_manager.AndroidStepEnvManager
+  env_manager_cls: roll.pipeline.agentic.env_manager.android_step_env_manager_guiowl.AndroidStepEnvManager
   use_thread_lock: false
   max_env_step_concurrent: 32
   env_config:
@@ -179,17 +177,12 @@ android_world: &android_world
         console_ports: ${android_servers.server1.console_ports}
         grpc_ports: ${android_servers.server1.grpc_ports}
         adb_path: ${android_servers.server1.adb_path}
-        group_size: ${android_servers.server1.group_size}
-        n_task: ${android_servers.server1.n_task}
-        
 
       - service_url: ${android_servers.server2.service_url}
         envs_num: ${android_servers.server2.envs_num}
         console_ports: ${android_servers.server2.console_ports}
         grpc_ports: ${android_servers.server2.grpc_ports}
         adb_path: ${android_servers.server2.adb_path}
-        group_size: ${android_servers.server2.group_size}
-        n_task: ${android_servers.server2.n_task}
 
 custom_envs:
 

@@ -33,7 +33,7 @@ class AgenticRolloutPipeline(BasePipeline):
         self.pipeline_config: AgenticConfig
 
         self.pipeline_config.set_max_steps(max_steps=self.pipeline_config.max_steps)
-        self.use_policy_model = self.pipeline_config.train_env_manager.llm_proxy.proxy_type == "policy"
+        self.use_policy_model = self.pipeline_config.val_env_manager.llm_proxy.proxy_type == "policy"
 
         self.actor_infer: Any = Cluster(
             name=self.pipeline_config.actor_infer.name,
@@ -47,10 +47,10 @@ class AgenticRolloutPipeline(BasePipeline):
         
         self.rollout_scheduler = ray.remote(RolloutScheduler).remote(
             config=self.pipeline_config,
-            env_manager_config=self.pipeline_config.train_env_manager,
+            env_manager_config=self.pipeline_config.val_env_manager,
             resource_manager=self.resource_manager,
             infer_cluster=self.actor_infer,
-            mode="train",
+            mode="val",
         )
 
         if self.use_policy_model:
@@ -69,7 +69,7 @@ class AgenticRolloutPipeline(BasePipeline):
                 if self.use_policy_model:
                     batch.meta_info["is_offload_states"] = True
                     self.actor_infer.start_server(data=batch)
-                batch = ray.get(self.rollout_scheduler.get_batch.remote(batch, self.pipeline_config.rollout_batch_size))
+                batch = ray.get(self.rollout_scheduler.get_batch.remote(batch, self.pipeline_config.val_batch_size))
                 if batch is None:
                     break
 
@@ -102,46 +102,46 @@ class AgenticRolloutPipeline(BasePipeline):
 
             dump_rollout_trajectories(self.pipeline_config.rollout_dump_dir, global_step, batch)
 
-            if global_step % self.pipeline_config.logging_steps == 0:
-                if int(os.environ.get("RAY_PROFILING", "0")):
-                    timeline_dir = os.path.join(self.pipeline_config.profiler_output_dir, "timeline")
-                    os.makedirs(timeline_dir, exist_ok=True)
-                    ray.timeline(
-                        filename=os.path.join(timeline_dir, f"timeline-step-{global_step}.json"),
-                    )
+            # if global_step % self.pipeline_config.logging_steps == 0:
+            #     if int(os.environ.get("RAY_PROFILING", "0")):
+            #         timeline_dir = os.path.join(self.pipeline_config.profiler_output_dir, "timeline")
+            #         os.makedirs(timeline_dir, exist_ok=True)
+            #         ray.timeline(
+            #             filename=os.path.join(timeline_dir, f"timeline-step-{global_step}.json"),
+            #         )
 
-                prompt_mask = batch.batch["prompt_mask"]
-                non_prompt_mask = torch.logical_not(batch.batch["prompt_mask"])
-                input_ids = batch.batch["input_ids"]
-                prompt_ids = torch.where(
-                    prompt_mask.bool(), input_ids, torch.full_like(input_ids, self.tokenizer.pad_token_id)
-                )
-                response_ids = torch.where(
-                    non_prompt_mask.bool(), input_ids, torch.full_like(input_ids, self.tokenizer.pad_token_id)
-                )
+            #     prompt_mask = batch.batch["prompt_mask"]
+            #     non_prompt_mask = torch.logical_not(batch.batch["prompt_mask"])
+            #     input_ids = batch.batch["input_ids"]
+            #     prompt_ids = torch.where(
+            #         prompt_mask.bool(), input_ids, torch.full_like(input_ids, self.tokenizer.pad_token_id)
+            #     )
+            #     response_ids = torch.where(
+            #         non_prompt_mask.bool(), input_ids, torch.full_like(input_ids, self.tokenizer.pad_token_id)
+            #     )
 
-                generate_res = []
-                prompts = self.tokenizer.batch_decode(prompt_ids, skip_special_tokens=True)
-                responses = self.tokenizer.batch_decode(response_ids, skip_special_tokens=True)
-                episode_scores = batch.non_tensor_batch["episode_scores"].tolist()
-                for prompt, prompt_id, response, response_id, episode_score in zip(
-                    prompts, prompt_ids, responses, response_ids, episode_scores
-                ):
-                    generate_res.append(
-                        {
-                            "prompt": prompt,
-                            "response": response,
-                            "episode_score": episode_score,
-                        }
-                    )
-                logger.info(json.dumps(generate_res[:3], ensure_ascii=False))
-                logger.info(json.dumps(metrics, ensure_ascii=False))
+            #     generate_res = []
+            #     prompts = self.tokenizer.batch_decode(prompt_ids, skip_special_tokens=True)
+            #     responses = self.tokenizer.batch_decode(response_ids, skip_special_tokens=True)
+            #     episode_scores = batch.non_tensor_batch["episode_scores"].tolist()
+            #     for prompt, prompt_id, response, response_id, episode_score in zip(
+            #         prompts, prompt_ids, responses, response_ids, episode_scores
+            #     ):
+            #         generate_res.append(
+            #             {
+            #                 "prompt": prompt,
+            #                 "response": response,
+            #                 "episode_score": episode_score,
+            #             }
+            #         )
+            #     logger.info(json.dumps(generate_res[:3], ensure_ascii=False))
+            #     logger.info(json.dumps(metrics, ensure_ascii=False))
 
-                # 定义文件路径
-                file_path = "/HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/output/evaluate_result.json"
-                os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                with open(file_path, 'w') as f:
-                    json.dump(metrics, f, ensure_ascii=False, indent=4)
+            #     # 定义文件路径
+            #     file_path = "/HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/output/evaluate_result.json"
+            #     os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            #     with open(file_path, 'w') as f:
+            #         json.dump(metrics, f, ensure_ascii=False, indent=4)
 
             logger.info(f"pipeline step {global_step} finished")
             global_step += 1

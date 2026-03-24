@@ -174,3 +174,6 @@ log
 
 output/
 .vscode/
+
+# 自定义
+trajectories/

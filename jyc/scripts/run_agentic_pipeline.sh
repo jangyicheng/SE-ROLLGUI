@@ -14,4 +14,4 @@ export DASHBOARD_PORT=8299
 
 python jyc/start_agentic_pipeline.py \
     --config_path "." \
-    --config_name agent_val_android_grpo
+    --config_name agent_val_multiandroid_grpo

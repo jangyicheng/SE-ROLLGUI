@@ -12,9 +12,16 @@ export DASHBOARD_PORT=8299
 # bash emulator_start.sh
 # ssh -fN -L 18000:localhost:8000 -p 30115 root@121.46.19.2 
 
+MODEL_PARAM=$1
+
+CONFIG_NAME="agent_val_multiandroid_grpo_evaluate"
+if [ "$MODEL_PARAM" = "guiowl" ]; then
+    CONFIG_NAME="agent_val_multiandroid_grpo_evaluate_guiowl"
+fi
+if [ "$MODEL_PARAM" = "reflection" ]; then
+    CONFIG_NAME="agent_val_multiandroid_grpo_evaluate_reflection"
+fi
+
 python jyc/evaluate_agentic_pipeline.py \
     --config_path "." \
-    --config_name agent_val_multiandroid_grpo_evaluate # agent_val_android_grpo_evaluate #
-
-
-
+    --config_name $CONFIG_NAME

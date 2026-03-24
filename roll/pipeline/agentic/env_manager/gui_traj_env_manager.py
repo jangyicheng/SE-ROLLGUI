@@ -27,7 +27,7 @@ from roll.utils.logging import get_logger
 from roll.utils.str_utils import contains_renderable_field
 
 
-class TrajEnvManager(BaseEnvManager):
+class GuiTrajEnvManager(BaseEnvManager):
     def __init__(self,
                  worker_config: EnvManagerConfig,
                  pipeline_config: AgenticConfig,
@@ -378,3 +378,30 @@ class TrajEnvManager(BaseEnvManager):
         env_metric["env/response_length"] = response_length
         lm_input.meta_info = {"metrics": env_metric}
         return lm_input
+    
+    
+class AndroidEnvGroupFilter:
+    def __init__(self, config: AgenticConfig, env_manager_config: EnvManagerConfig, mode: str):
+        self.config = config
+        self.env_manager_config = env_manager_config
+        self.mode = mode
+
+    def filter(self, group_id: int, episode_id: int, group: list[DataProto]):
+        """
+        return True to filter out this group
+        """
+        if self.mode == "val":
+            return False
+        
+        logger.info("Filtering is disabled for now")
+        return False
+
+        group_episode_reward = np.array([rollout.non_tensor_batch["episode_scores"][0] for rollout in group])
+        reward_mean = group_episode_reward.mean()
+        reward_std = group_episode_reward.std()
+        if reward_mean == 0:
+            logger.info(
+                f"Filter group {group_id} episode {episode_id} with reward mean {reward_mean:.4f} and std {reward_std:.4f}"
+            )
+            return True
+        return False

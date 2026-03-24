@@ -32,94 +32,269 @@ class GroupData:
     running_rollouts: int = 0
 
 
-# 请你恢复使用GroupQueue的方式，但仍然保持动态分配 group_id 的 GroupQueueManager，仅在现有的代码上加入下面几点功能：
-# 1. 恢复功能：为每个group对应的任务均分配一个GroupQueue，并为其中的GroupData赋予准确的episode_id
-# 2. 恢复功能：使得GroupQueueManager能够根据async_generation_ratio去管理数据的过时性
-
-@ray.remote
-class GroupQueueManager:
-    """
-    动态任务分配的 GroupQueueManager。
-    环境不再绑定固定 group_id，而是每次请求任务时动态分配。
-    同一任务的 group_size 条轨迹填入同一个 group。
-    """
-
-    def __init__(self, config, env_manager_config: EnvManagerConfig, mode):
-        self.mode = mode
-        self.env_manager_config = env_manager_config
-        self.group_size = self.env_manager_config.group_size
-        self.group_size_redundancy = env_manager_config.group_size_redundancy
-        self.progress_bar = tqdm(desc=f"{self.mode} rollout progress(trajectory)", mininterval=1)
-        self.pending_gets = set()
-        self.rollout_complete = {}
-
-        group_filter_cls = safe_import_class(env_manager_config.group_filter_cls)
-        assert group_filter_cls
-        self.group_filter = group_filter_cls(config, env_manager_config, mode)
+# 新增：放在 GroupData 后
+class GroupQueue:
+    def __init__(
+        self,
+        group_id: int,
+        task: str,
+        progress_bar: tqdm,
+        group_size: int,
+        group_size_redundancy: int,
+        max_traj_per_env: Optional[int],
+        async_generation_ratio: int,
+        group_filter,
+    ):
+        self.group_id = group_id
+        self.task = task
+        self.progress_bar = progress_bar
+        self.group_size = group_size
+        self.group_size_redundancy = group_size_redundancy
+        self.max_traj_per_env = max_traj_per_env
+        self.async_generation_ratio = async_generation_ratio
+        self.group_filter = group_filter
         self.group_filter_count = 0
 
-        if self.mode == "train":
-            self.async_generation_ratio = config.async_generation_ratio
-        else:
-            self.async_generation_ratio = 0
-
-        # 动态 group 管理
-        self.next_group_id = 0
-        self.groups: Dict[int, GroupData] = {}  # group_id -> GroupData
-        self.task_to_pending_group: Dict[str, int] = {}  # task -> 当前未满的 group_id
-        self.task_to_fixed_group: Dict[str, int] = {}    # task -> 永久固定 group_id（新增）
-        self.completed_groups: List[GroupData] = []  # 已完成待消费的 groups
-
-        # TaskManager URL（需要在 env_manager_config 中配置 task_manager_url）
-        self.task_manager_url = getattr(env_manager_config, 'task_manager_url', 'http://localhost:5001')
-
         self.current_step = None
+        self.next_episode_id = 0
+        self.groups: Dict[int, GroupData] = {}
+
         self.progress = asyncio.Event()
         self.complete = asyncio.Event()
         self.quit = False
 
-        # 统计所有 env 数量，用于判断所有 env 退出
-        self.total_env_count = sum(
-            len(rank_envs) for rank_envs in env_manager_config.env_configs.values()
+    def clear(self):
+        self.current_step = None
+        self.next_episode_id = 0
+        self.groups.clear()
+        self.progress = asyncio.Event()
+        self.complete = asyncio.Event()
+
+    def shutdown(self):
+        self.quit = True
+        self.groups.clear()
+        self.progress.set()
+        self.complete.set()
+
+    def advance_group(self, create_step: int):
+        assert not self.quit
+        self.groups[self.next_episode_id] = GroupData(
+            group_id=self.group_id,
+            episode_id=self.next_episode_id,
+            create_step=create_step,
+            task=self.task,
         )
-        self.env_exit_count = 0
-        self.all_done = False
+        self.next_episode_id += 1
 
-        # for debug
-        self.total = 0
-        self.waiting = 0
-        self.current_group_id = None
-        self.current_task = ''
+    def _advance_step(self, create_step: int):
+        if self.max_traj_per_env is None:
+            return
+        for _ in range(self.max_traj_per_env):
+            self.advance_group(create_step)
 
-
-    def _allocate_group(self, task: str) -> int:
-        """为指定任务分配 group；同一 task 永久复用同一 group_id。"""
-        if task in self.task_to_fixed_group:
-            group_id = self.task_to_fixed_group[task]
+    def advance_step(self, step: int):
+        if self.current_step is None:
+            for _ in range(self.async_generation_ratio):
+                self._advance_step(step)
         else:
-            group_id = self.next_group_id
-            self.next_group_id += 1
-            self.task_to_fixed_group[task] = group_id
+            expired = []
+            for episode_id, group in self.groups.items():
+                if step - group.create_step > self.async_generation_ratio:
+                    expired.append(episode_id)
+            for episode_id in expired:
+                self.groups.pop(episode_id, None)
 
-        # 若该 group 当前不在活跃组中，则创建一个新的轮次容器
-        if group_id not in self.groups:
-            self.groups[group_id] = GroupData(
-                group_id=group_id,
-                episode_id=group_id,  # 保持你当前逻辑，最小改动
-                create_step=self.current_step or 0,
-                task=task,
-            )
+        self.current_step = step
+        self._advance_step(step)
+        self.progress.set()
 
-        self.task_to_pending_group[task] = group_id
-        logger.info(f"Allocated group {group_id} for task: {task}")
-        return group_id
+    async def get_episode_id(self) -> Optional[int]:
+        while not self.quit:
+            for episode_id, group in self.groups.items():
+                if group.running_rollouts < self.group_size + self.group_size_redundancy:
+                    group.running_rollouts += 1
+                    return episode_id
+
+            if self.max_traj_per_env is None:
+                while self.current_step is None and not self.quit:
+                    self.progress.clear()
+                    await self.progress.wait()
+                if self.quit:
+                    return None
+                self.advance_group(self.current_step)
+                continue
+            else:
+                self.progress.clear()
+                await self.progress.wait()
+        return None
+
+    def put(self, episode_id: int, start_step: int, rollout: DataProto):
+        if episode_id not in self.groups:
+            return
+        group = self.groups[episode_id]
+        assert start_step >= group.create_step, f"{start_step=} {group.create_step=}"
+        group.rollouts.append(rollout)
+
+        if len(group.rollouts) == self.group_size:
+            if all(r is None for r in group.rollouts):
+                self.complete.set()
+            elif self.group_filter.filter(group_id=self.group_id, episode_id=episode_id, group=group.rollouts):
+                logger.info(f"filter rollout group {group.group_id} episode {group.episode_id}")
+                self.group_filter_count += 1
+                candidate_idxs = [i for i, r in enumerate(group.rollouts) if r is not None]
+                if not candidate_idxs:
+                    logger.info(
+                        f"no valid rollouts to replace for group {group.group_id} episode {group.episode_id}, drop group"
+                    )
+                    self.groups.pop(episode_id, None)
+                    if self.current_step is not None:
+                        self.advance_group(create_step=self.current_step)
+                    return
+
+                replacement_idx = random.choice(candidate_idxs)
+
+                # 尝试从当前 group 中提取 task
+                task = None
+                try:
+                    for r in group.rollouts:
+                        if r is None:
+                            continue
+                        meta = getattr(r, "meta_info", None)
+                        if isinstance(meta, dict):
+                            task = meta.get("task")
+                            if task:
+                                break
+                except Exception as e:
+                    logger.info(f"failed to extract task from rollouts: {e}")
+                    task = None
+
+                replaced = False
+                if task is not None:
+                    try:
+                        traj_cache_actor = ray.get_actor("global_traj_cache")
+                        cached = ray.get(traj_cache_actor.get_best_trajectory.remote(task))
+                        if isinstance(cached, DataProto):
+                            group.rollouts[replacement_idx] = cached
+                            replaced = True
+                        elif cached is not None:
+                            logger.info("global cache returned a rollout but cannot convert to DataProto")
+                    except Exception as e:
+                        logger.info(f"failed to fetch/convert cached trajectory: {e}")
+
+                if replaced:
+                    # 替换成功：保留当前组用于 get() 消费，并补一个新 episode 占位
+                    if self.current_step is not None:
+                        self.advance_group(create_step=self.current_step)
+                    self.complete.set()
+                    self.progress_bar.update(self.group_size)
+                else:
+                    # 替换失败：按过滤逻辑丢弃该组，并补一个新 episode 占位
+                    logger.info(f"drop filtered group {group.group_id} episode {group.episode_id} due to cache miss")
+                    self.groups.pop(episode_id, None)
+                    if self.current_step is not None:
+                        self.advance_group(create_step=self.current_step)
+            else:
+                self.complete.set()
+                self.progress_bar.update(self.group_size)
+
+    async def get(self) -> GroupData:
+        while True:
+            while not self.groups:
+                self.complete.clear()
+                await self.complete.wait()
+            episode_id = next(iter(self.groups))
+            group = self.groups[episode_id]
+            if len(group.rollouts) >= self.group_size:
+                self.groups.pop(episode_id, None)
+                return group
+            self.complete.clear()
+            await self.complete.wait()
+            
+
+@ray.remote
+class GroupQueueManager:
+    def __init__(self, config, env_manager_config: EnvManagerConfig, mode):
+        self.mode = mode
+        self.env_manager_config = env_manager_config
+        self.group_size = env_manager_config.group_size
+        self.group_size_redundancy = env_manager_config.group_size_redundancy
+        self.progress_bar = tqdm(desc=f"{self.mode} rollout progress(trajectory)", mininterval=1)
+
+        group_filter_cls = safe_import_class(env_manager_config.group_filter_cls)
+        assert group_filter_cls
+        self.group_filter = group_filter_cls(config, env_manager_config, mode)
+
+        if self.mode == "train":
+            self.async_generation_ratio = config.async_generation_ratio
+            self.max_traj_per_env = env_manager_config.max_traj_per_env if config.rollout_batch_size > 0 else None
+        else:
+            self.async_generation_ratio = 0
+            self.max_traj_per_env = env_manager_config.max_traj_per_env if config.val_batch_size > 0 else None
+
+        self.task_manager_url = getattr(env_manager_config, "task_manager_url", "http://localhost:5001")
+
+        self.next_group_id = 0
+        self.task_to_group_id: Dict[str, int] = {}
+        self.group_queues: Dict[int, GroupQueue] = {}
+
+        self.pending_gets = set()
+        self.rollout_complete = {}
+
+        self.current_step = None
+        self.progress = asyncio.Event()
+        self.quit = False
+        
+        self.max_traj_per_env = None # 不限制每个环境的轨迹数量，改为通过 group_filter 来控制
+
+
+    def _get_or_create_group_queue(self, task: str) -> Tuple[int, GroupQueue]:
+        if task in self.task_to_group_id:
+            gid = self.task_to_group_id[task]
+            logger.info(f"Using allocated group {gid} for task: {task}")
+            return gid, self.group_queues[gid]
+
+        gid = self.next_group_id
+        self.next_group_id += 1
+        self.task_to_group_id[task] = gid
+
+        q = GroupQueue(
+            group_id=gid,
+            task=task,
+            progress_bar=self.progress_bar,
+            group_size=self.group_size,
+            group_size_redundancy=self.group_size_redundancy,
+            max_traj_per_env=self.max_traj_per_env,
+            async_generation_ratio=self.async_generation_ratio,
+            group_filter=self.group_filter,
+        )
+        self.group_queues[gid] = q
+        logger.info(f"Allocated group {gid} for task: {task}")
+        if self.current_step is not None:
+            q.advance_step(self.current_step)
+        return gid, q
+
+    def collect_metrics(self):
+        cnt = 0
+        for q in self.group_queues.values():
+            cnt += q.group_filter_count
+            q.group_filter_count = 0
+        return {"scheduler/group_filter_count": cnt}
+
+    def clear(self):
+        self.rollout_complete = {}
+        for q in self.group_queues.values():
+            q.clear()
+
+        self.current_step = None
+        self.progress = asyncio.Event()
+
+    def advance_step(self, step):
+        self.current_step = step
+        for q in self.group_queues.values():
+            q.advance_step(step)
+        self.progress.set()
 
     async def get_episode_id(self, group_id=None) -> Optional[Dict]:
-        """
-        环境请求任务分配。返回 {'group_id': ..., 'episode_id': ..., 'task': ...} 或 None。
-        忽略传入的 group_id 参数（保持向后兼容）。
-        """
-        # 等待 advance_step 被调用
         while self.current_step is None and not self.quit:
             self.progress.clear()
             await self.progress.wait()
@@ -127,7 +302,6 @@ class GroupQueueManager:
         if self.quit:
             return None
 
-        # 调用 TaskManager 获取任务
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.get(f"{self.task_manager_url}/get_task")
@@ -139,187 +313,123 @@ class GroupQueueManager:
 
         task = data["task"]
         if task == "finish":
-            logger.info("TaskManager returned 'finish', no more tasks")
             return None
 
-        # 查找或创建该任务的 group
-        if task in self.task_to_pending_group:
-            gid = self.task_to_pending_group[task]
-            if gid in self.groups:
-                group = self.groups[gid]
-                group.running_rollouts += 1
-                # 如果已分配足够多的 env，移除 pending 映射
-                if group.running_rollouts >= self.group_size + self.group_size_redundancy:
-                    del self.task_to_pending_group[task]
-            else:
-                # group 已被消费或清理，重新分配
-                gid = self._allocate_group(task)
-                self.groups[gid].running_rollouts = 1
-        else:
-            gid = self._allocate_group(task)
-            self.groups[gid].running_rollouts = 1
-
-        return {
-            'group_id': gid,
-            'episode_id': self.groups[gid].episode_id,
-            'task': task,
-        }
-
-    def collect_metrics(self):
-        group_filter_count = self.group_filter_count
-        self.group_filter_count = 0
-        return {"scheduler/group_filter_count": group_filter_count}
-
-    def clear(self):
-        self.rollout_complete = {}
-        for get_task in self.pending_gets:
-            get_task.cancel()
-        self.pending_gets = set()
-        self.groups.clear()
-        self.task_to_pending_group.clear()
-        self.completed_groups.clear()
-        self.current_step = None
-        self.env_exit_count = 0
-        self.all_done = False
-        self.progress = asyncio.Event()
-        self.complete = asyncio.Event()
-
-    def advance_step(self, step):
-        self.current_step = step
-        self.progress.set()
+        gid, q = self._get_or_create_group_queue(task)
+        episode_id = await q.get_episode_id()
+        if episode_id is None:
+            return None
+        return {"group_id": gid, "episode_id": episode_id, "task": task}
 
     def shutdown(self):
         self.quit = True
-        self.groups.clear()
-        self.task_to_pending_group.clear()
-        self.completed_groups.clear()
+        for q in self.group_queues.values():
+            q.shutdown()
         self.progress.set()
-        self.complete.set()
-        for get_task in self.pending_gets:
-            get_task.cancel()
-        self.pending_gets = set()
 
     def put(self, group_id, episode_id, start_step, rollout: DataProto):
-        # 处理环境退出信号
         if rollout is None:
-            self.env_exit_count += 1
-            logger.info(f"Env exit signal received ({self.env_exit_count}/{self.total_env_count})")
-            if self.env_exit_count >= self.total_env_count:
-                self.all_done = True
-                self.complete.set()
             return
-
-        if group_id not in self.groups:
-            logger.warning(f"Received rollout for unknown group_id {group_id}, ignoring")
+        q = self.group_queues.get(group_id)
+        if q is None:
             return
+        
+        
+        # 仅在评测模式下瘦身 rollout：保留评测必需字段，去掉 prompt/轨迹等大字段
+        if self.mode in ("val"):
+            keep_batch_keys = [k for k in ("scores",) if k in rollout.batch.keys()]
+            keep_non_tensor_batch_keys = [
+            k for k in (
+                "episode_scores",
+                "step_scores",
+                "tags",
+                "env_ids",
+                "group_ids",
+                "traj_group_id",
+                "traj_id",
+                "traj_rollout_time",
+                "traj_env_time",
+            )
+            if k in rollout.non_tensor_batch
+        ]
+            keep_meta_info_keys = [k for k in ("metrics", "task") if k in rollout.meta_info]
 
-        self.waiting += 1
-        group = self.groups[group_id]
-        group.rollouts.append(rollout)
+            rollout = rollout.select(
+                batch_keys=keep_batch_keys,
+                non_tensor_batch_keys=keep_non_tensor_batch_keys,
+                meta_info_keys=keep_meta_info_keys,
+                deepcopy=False,
+            )
+        q.put(episode_id, start_step, rollout)
 
-        if len(group.rollouts) == self.group_size:
-            task = group.task
-            if all(r is None for r in group.rollouts):
-                logger.info(f"GroupQueueManager: group {group_id} all None, skip")
-                self.groups.pop(group_id)
-                if task in self.task_to_pending_group and self.task_to_pending_group[task] == group_id:
-                    del self.task_to_pending_group[task]
-            elif self.group_filter.filter(group_id=group_id, episode_id=episode_id, group=group.rollouts):
-                logger.info(f"filter rollout group {group.group_id} episode {group.episode_id}")
-                self.group_filter_count += 1
-                candidate_idxs = [i for i, r in enumerate(group.rollouts) if r is not None]
-                if not candidate_idxs:
-                    logger.info(f"no valid rollouts to replace for group {group.group_id} episode {group.episode_id}, drop group")
-                    self.groups.pop(episode_id)
-                    self.advance_group(create_step=self.current_step)
-                    return
-                replacement_idx = random.choice(candidate_idxs)
-
-                try:
-                    # 尝试从已有 rollouts 中提取 task 标识
-                    task = None
-                    for r in group.rollouts:
-                        if r is None:
-                            continue
-                        meta = getattr(r, "meta_info", None)
-                        if isinstance(meta, dict):
-                            task = meta.get("task") 
-                            if task:
-                                break
-                except Exception as e:
-                    logger.info(f"failed to extract task from rollouts: {e}")
-                    task = None
-                            
-                replaced = False
-                if task is not None:
-                    try:
-                        traj_cache_actor = ray.get_actor("global_traj_cache")
-                        cached = ray.get(traj_cache_actor.get_best_trajectory.remote(task))
-                        if cached:
-                            if isinstance(cached, DataProto):
-                                group.rollouts[replacement_idx] = cached
-                                replaced = True
-                            else:
-                                logger.info("global cache returned a rollout but cannot convert to DataProto")
-                    except Exception as e:
-                        logger.info(f"failed to fetch/convert cached trajectory: {e}")
-
-                if replaced:
-                        # 替换成功：保留该组（已替换），并补一个新的 group 占位，唤醒等待者
-                        self.advance_group(create_step=self.current_step)
-                        self.complete.set()
-                        self.progress_bar.update(self.group_size)
-                else:
-                    # 缓存返回失败或无 task：仍然按 filter 行为过滤掉该组（丢弃）
-                    logger.info(f"drop filtered group {group.group_id} episode {group.episode_id} due to cache miss")
-                    self.groups.pop(episode_id)
-                    self.advance_group(create_step=self.current_step)
-                if task in self.task_to_pending_group and self.task_to_pending_group[task] == group_id:
-                    del self.task_to_pending_group[task]
-            else:
-                # group 完成，移入已完成队列
-                self.groups.pop(group_id)
-                if task in self.task_to_pending_group and self.task_to_pending_group[task] == group_id:
-                    del self.task_to_pending_group[task]
-                self.completed_groups.append(group)
-                self.complete.set()
-                self.progress_bar.update(self.group_size)
-
-        self.waiting -= 1
-        self.total += 1
 
     async def get_batch(self, batch_size, current_step) -> List[DataProto]:
         """
         返回已完成的 rollouts，按 group 收集。
-        batch_size < 0 表示收集所有直到所有环境退出。
+        batch_size < 0 表示尽可能收集当前已完成数据后返回。
         """
         ret: List[DataProto] = []
 
         while batch_size < 0 or len(ret) < batch_size:
-            # 检查是否全部完成
-            if self.all_done and not self.completed_groups:
-                break
-
-            # 等待有已完成的 group
-            while not self.completed_groups:
-                if self.all_done:
+            
+            if not self.group_queues:
+                if batch_size < 0:
                     break
-                self.complete.clear()
-                await self.complete.wait()
+                await asyncio.sleep(0.1)
+                continue
+            
+            tasks = {
+                asyncio.create_task(q.get(), name=str(gid))
+                for gid, q in self.group_queues.items()
+            }
+            # assert self.group_queues, "No group queues available"
 
-            if not self.completed_groups:
+            if not tasks:
+                print("no group queues available, returning empty batch")
                 break
 
-            group = self.completed_groups.pop(0)
-            for rollout in group.rollouts:
-                if rollout is not None:
-                    ret.append(rollout)
+            done, pending = await asyncio.wait(
+                tasks,
+                timeout=0.2,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for p in pending:
+                p.cancel()
+
+            if not done:
+                # 无已完成 group：对 batch_size<0 直接返回已收集内容；
+                # 对 batch_size>0 继续等下一轮
+                if batch_size < 0:
+                    break
+                continue
+
+            for d in done:
+                group = await d
+                group_rollout = [r for r in group.rollouts if r is not None]
+                if len(group_rollout) == 0:
+                    continue
+
+                # 过时数据过滤：基于 async_generation_ratio
+                if current_step - group.create_step > self.async_generation_ratio:
+                    continue
+
+                if batch_size > 0:
+                    remain = batch_size - len(ret)
+                    if remain <= 0:
+                        break
+                    ret.extend(group_rollout[:remain])
+                else:
+                    ret.extend(group_rollout)
+
+                if batch_size > 0 and len(ret) >= batch_size:
+                    break
 
         get_batch_return_start_time = time.time()
         for d in ret:
             d.meta_info["get_batch_return_start_time"] = get_batch_return_start_time
+        print(f"get_batch returning {len(ret)} rollouts, current_step={current_step}, batch_size={batch_size}")
         return ret
-
 
 class RolloutScheduler:
     """
@@ -376,8 +486,17 @@ class RolloutScheduler:
         )
 
         self.rollout_task = None
-        self.manager = GlobalTrajectoryCacheManager.options(name="global_traj_manager").remote()
-        self.cache = GlobalTrajectoryCache.options(name="global_traj_cache").remote()
+        try:
+            self.manager = ray.get_actor("global_traj_manager")
+        except ValueError:
+            # 不存在，创建新的
+            self.manager = GlobalTrajectoryCacheManager.options(name="global_traj_manager").remote()
+
+        # 同理处理 cache actor
+        try:
+            self.cache = ray.get_actor("global_traj_cache")
+        except ValueError:
+            self.cache = GlobalTrajectoryCache.options(name="global_traj_cache").remote()
 
 
     async def shutdown(self):

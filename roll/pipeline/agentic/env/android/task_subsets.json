@@ -1,0 +1,15 @@
+{
+  "SYSTEM_TASKS": [
+    "SystemWifiTurnOn",
+    "SystemWifiTurnOff",
+    "SystemBluetoothTurnOn",
+    "SystemBrightnessMin",
+    "SystemBrightnessMax"
+  ],
+  "CALENDAR_TASKS": [
+    "SimpleCalendarAddOneEvent",
+    "SimpleCalendarAddOneEventTomorrow",
+    "SimpleCalendarAddOneEventRelativeDay",
+    "SimpleCalendarAddOneEventInTwoWeeks"
+  ]
+}

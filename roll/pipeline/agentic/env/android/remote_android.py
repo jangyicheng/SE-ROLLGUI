@@ -28,23 +28,13 @@ def log_time_on_error(func):
     return wrapper
 
 
-TASK_LIST = [
-    "SimpleCalendarAddOneEventInTwoWeeks",
-    "ExpenseAddMultipleFromMarkor",
-    "RetroCreatePlaylist",
-    "RetroPlaylistDuration",
-    "RetroPlayingQueue",
-    "OsmAndMarker",
-    "SimpleSmsSendReceivedAddress",
-    "MarkorMergeNotes",
-    "MarkorCreateNoteAndSms",
-    "OsmAndFavorite",
-    "OsmAndTrack", 
-    "RecipeAddMultipleRecipes",
-    "RecipeAddMultipleRecipesFromImage",
-    "RecipeAddMultipleRecipesFromMarkor2",   
-    ]
-
+# TASK_LIST = [ # 任务评测出现bug
+#     "OsmAndMarker",
+#     "OsmAndFavorite",
+#     "OsmAndTrack", 
+#     "SystemCopyToClipboard",
+#     "MarkorTranscribeVideo",
+#     ]
 
 
 class RemoteAndroidEnv(Env):
@@ -61,6 +51,8 @@ class RemoteAndroidEnv(Env):
         envs_num: int | None = None,
         save_dir: str = "trajectories",
         group_size: int = 1,
+        mode: str = "train",
+        n_task: int = 3 ,
         **kwargs,
     ):
         # 基础配置解析
@@ -79,9 +71,8 @@ class RemoteAndroidEnv(Env):
         
         self.max_steps = max_steps
         self.task_family = task_family
-        time_str = datetime.now().strftime("%Y-%m-%d_%H%M")
-        self.save_dir = Path(save_dir) / time_str
-        self.current_task_dir = None
+        
+
         
         # 任务初始化
         if task == "all_task":
@@ -89,9 +80,15 @@ class RemoteAndroidEnv(Env):
             task_list = TASK_LIST[:num]
         else:
             task_list = task.split(",") if task else []
+            
+        if mode == "train":
+            n_task = int(1e9) # 训练模式下不限制任务数量
 
-        requests.post(f"{self.task_manager_url}/initialize", json={"task_list": task_list , "group_size": group_size})
-        
+        data = requests.post(f"{self.task_manager_url}/initialize", json={"task_list": task_list , "group_size": group_size, "n_task": n_task})
+        time_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        self.timestamp = data.json().get("timestamp", time_str)
+        self.save_dir = Path(save_dir) / f"{self.timestamp}"
+        self.current_task_dir = None
         # 远程 Server 初始化
         self._init_server(adb_path, max_image_tokens)
 
@@ -109,7 +106,7 @@ class RemoteAndroidEnv(Env):
     )
     @log_time_on_error
     def call_init(self,payload):
-        return requests.post(f"{self.service_url}/init", json=payload, timeout=90)
+        return requests.post(f"{self.service_url}/init", json=payload, timeout=240)
     
     @retry(
         stop=stop_after_attempt(3),  # 最多尝试3次
@@ -118,7 +115,7 @@ class RemoteAndroidEnv(Env):
     )
     @log_time_on_error
     def call_reset(self, payload):
-        resp = requests.post(f"{self.service_url}/reset", json=payload, timeout=180)
+        resp = requests.post(f"{self.service_url}/reset", json=payload, timeout=240)
         return resp.json()
     
     @retry(
@@ -128,7 +125,7 @@ class RemoteAndroidEnv(Env):
     )
     @log_time_on_error
     def call_step(self, payload):
-        resp = requests.post(f"{self.service_url}/step", json=payload, timeout=180)
+        resp = requests.post(f"{self.service_url}/step", json=payload, timeout=240)
         return resp.json()
 
     def _init_server(self, adb_path, max_image_tokens):
@@ -152,7 +149,7 @@ class RemoteAndroidEnv(Env):
         obs_np = np.frombuffer(np_bytes, dtype=dtype).reshape(shape)
         return obs_np
 
-    def _save_step_data(self, step_idx, obs_np, action, response_text=None):
+    def _save_step_data(self, step_idx, obs_np, action):
         """存储单步轨迹：图片 + JSON 元数据"""
         if not self.current_task_dir:
             return
@@ -165,8 +162,7 @@ class RemoteAndroidEnv(Env):
         step_info = {
             "step": step_idx,
             "action": action,
-            "ai_response": response_text,
-            "timestamp": time.time()
+            "timestamp": time.strftime("%Y-%m-%d_%H%M%S")
         }
         
         with open(self.current_task_dir / "steps.jsonl", "a", encoding="utf-8") as f:
@@ -201,7 +197,8 @@ class RemoteAndroidEnv(Env):
         
         self.current_obs = self._decode_obs(data)
         self.task = data["task"] # 包含任务名、目标等
-        self.max_steps = min(self.task.get("max_steps", self.max_steps), self.max_steps)
+        self.assigned_task = target_task
+        self.max_steps = self.task.get("max_steps", self.max_steps) # 已经考虑了框架的最大交互步数
 
         # --- 初始化轨迹目录 ---
         task_name = self.task.get("name", "unknown_task")
@@ -218,10 +215,9 @@ class RemoteAndroidEnv(Env):
         
         return self.current_obs, data["info"]
 
-    def step(self, action: str | dict, ai_response: str = None):
+    def step(self, action: str | dict):
         """
         action: 执行的动作
-        ai_response: 可选，AI 生成的原始推理文本
         """
         payload = {
             "console_port": self.console_port,
@@ -235,7 +231,6 @@ class RemoteAndroidEnv(Env):
         #     return None, 0.0, True, None, {"error": resp.text}
         # data = resp.json()
             
-        
         obs_np = self._decode_obs(data)
         self.current_obs = obs_np
         self.current_steps += 1
@@ -243,7 +238,7 @@ class RemoteAndroidEnv(Env):
         terminate = data.get("terminate", False) or (self.current_steps >= self.max_steps) 
         
         # --- 存储轨迹 ---
-        self._save_step_data(self.current_steps, obs_np, action, ai_response)
+        self._save_step_data(self.current_steps, obs_np, action)
         
         if terminate:
             elapsed_time = time.time() - self.start_time if self.start_time else 0
@@ -251,13 +246,22 @@ class RemoteAndroidEnv(Env):
             
             # 通知 TaskManager
             completion_payload = {
-                "task": self.task["name"],
+                "task": self.assigned_task,
                 "success": success > 0.5,
                 "steps": self.current_steps,
-                "time": float(elapsed_time)
+                "time": float(elapsed_time),
             }
             requests.post(f"{self.task_manager_url}/complete_task", json=completion_payload)
             
+            #给completion_payload添加结束原因记录
+            # 补充代码：
+            if self.current_steps >= self.max_steps:
+                completion_payload["termination_reason"] = "max_steps"
+            elif "terminate" in action:
+                completion_payload["termination_reason"] = "active terminate"            
+            else:
+                completion_payload["termination_reason"] = "success"
+             
             # 存入最终状态到 meta
             with open(self.current_task_dir / "result.json", "w") as f:
                 json.dump(completion_payload, f, indent=4)

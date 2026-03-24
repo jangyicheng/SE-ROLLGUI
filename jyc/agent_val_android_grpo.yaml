@@ -36,8 +36,8 @@ system_envs:
 # ----------------------------------------------
 
 # 训练/评估流程配置
-max_steps: 50
-save_steps: 5
+max_steps: 3
+save_steps: 1
 logging_steps: 1
 eval_steps: 2
 resume_from_checkpoint: false
