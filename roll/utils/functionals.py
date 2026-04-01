@@ -200,6 +200,43 @@ def log_probs_from_logits(logits: torch.Tensor, labels: torch.Tensor) -> torch.T
     log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1))
     return log_probs_labels.squeeze(-1)
 
+# def log_probs_from_logits(logits: torch.Tensor, labels: torch.Tensor, chunk_size: int = 1) -> torch.Tensor:
+#     """
+#     分块计算 log_probs，与直接版完全等价，但峰值显存更低。
+    
+#     Args:
+#         logits:   [batch_size, seq_len, vocab_size]
+#         labels:   [batch_size, seq_len]
+#         chunk_size: 每次处理的样本数，默认为1（最省显存），可适当调大以换取速度。
+    
+#     Returns:
+#         log_probs: [batch_size, seq_len]
+#     """
+#     batch_size = logits.size(0)
+#     all_log_probs = []
+    
+#     for i in range(0, batch_size, chunk_size):
+#         # 取一块数据
+#         logits_chunk = logits[i:i+chunk_size].float()        # [chunk, L, V]
+#         labels_chunk = labels[i:i+chunk_size]                # [chunk, L]
+        
+#         # 计算 log_softmax
+#         log_prob_chunk = F.log_softmax(logits_chunk, dim=-1)  # [chunk, L, V]
+        
+#         # 提取 labels 对应的 log 概率（与函数2完全相同的操作）
+#         log_probs_labels = log_prob_chunk.gather(
+#             dim=-1, 
+#             index=labels_chunk.unsqueeze(-1)                  # [chunk, L, 1]
+#         ).squeeze(-1)                                         # [chunk, L]
+        
+#         all_log_probs.append(log_probs_labels)
+        
+#         # 立即释放中间变量，降低峰值显存
+#         del logits_chunk, log_prob_chunk
+    
+#     return torch.cat(all_log_probs, dim=0)                    # [batch, L]
+
+
 
 def entropy_from_logits(logits: torch.Tensor):
     """Calculate entropy from logits."""

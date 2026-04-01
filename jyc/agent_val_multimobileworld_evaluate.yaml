@@ -1,0 +1,149 @@
+defaults:
+  - ./config/vl_traj_envs@_here_
+  - ./config/deepspeed_zero@_here_
+  - ./config/deepspeed_zero2@_here_
+  - ./config/deepspeed_zero3@_here_
+  - ./config/deepspeed_zero3_cpuoffload@_here_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+Model: Qwen3-VL-8B-Instruct
+exp_name: ${Model}
+seed: 42
+logging_dir: ./output/logs
+output_dir: ./output
+render_save_dir: ./output/render
+system_envs:
+  USE_MODELSCOPE: '1'
+
+max_steps: 1
+save_steps: 1
+logging_steps: 1
+eval_steps: 1
+resume_from_checkpoint: false
+checkpoint_config:
+  type: file_system
+  output_dir: ckpt/${exp_name}
+
+rollout_batch_size: 12
+val_batch_size: 117
+sequence_length: 11000
+
+num_gpus_per_node: 1
+num_nodes: 1
+
+enable_reference: true
+advantage_clip: 0.2
+ppo_epochs: 4
+adv_estimator: "grpo"
+pg_clip_high: 0.28
+init_kl_coef: 0.001
+whiten_advantages: true
+entropy_loss_coef: 0
+max_grad_norm: 1.0
+
+pretrain: /HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/Models/${Model}
+
+actor_infer:
+  model_args:
+    flash_attn: fa2
+    disable_gradient_checkpointing: true
+    dtype: bf16
+  generating_args:
+    max_new_tokens: 512
+    top_p: 1.0
+    top_k: 40
+    num_beams: 1
+    temperature: 0.0
+    num_return_sequences: 1
+  data_args:
+    template: native
+  strategy_args:
+    strategy_name: vllm
+    strategy_config:
+      gpu_memory_utilization: 0.8
+      block_size: 16
+      load_format: auto
+      max_model_len: 32768
+  device_mapping: list(range(0,1))
+  infer_batch_size: 1
+
+reward_normalization:
+  grouping: traj_group_id
+  norm_mean_type: group
+  method: mean
+
+max_tokens_per_step: 512
+adb_path: /root/android-sdk/platform-tools/adb
+START_CONSOLE_PORT: 5554
+START_GRPC_PORT: 8554
+max_actions_per_traj: 40
+envs_num: 16
+
+train_env_manager:
+  max_env_num_per_worker: 32
+  num_env_groups: 24
+  group_size: 1
+  tags: [AndroidEnv-Train]
+  num_groups_partition: [24]
+  group_filter_cls: roll.pipeline.agentic.env_manager.gui_traj_env_manager.AndroidEnvGroupFilter
+
+val_env_manager:
+  max_env_num_per_worker: 32
+  num_env_groups: 32
+  group_size: 1
+  tags: [AndroidEnv-Val]
+  num_groups_partition: [32]
+  group_filter_cls: roll.pipeline.agentic.env_manager.gui_traj_env_manager.AndroidEnvGroupFilter
+
+android_servers:
+  server1:
+    service_url: http://localhost:18000
+    envs_num: ${envs_num}
+    console_ports: list(range(${START_CONSOLE_PORT}, ${START_CONSOLE_PORT}+2*${envs_num}, 2))
+    grpc_ports: list(range(${START_GRPC_PORT}, ${START_GRPC_PORT}+2*${envs_num}, 2))
+    adb_path: /root/android-sdk/platform-tools/adb
+
+  server2:
+    service_url: http://localhost:18001
+    envs_num: ${envs_num}
+    console_ports: list(range(${START_CONSOLE_PORT}, ${START_CONSOLE_PORT}+2*${envs_num}, 2))
+    grpc_ports: list(range(${START_GRPC_PORT}, ${START_GRPC_PORT}+2*${envs_num}, 2))
+    adb_path: /root/android-sdk/platform-tools/adb
+
+mobileworld: &mobileworld
+  env_type: remote_multi_mobileworld
+  max_steps: ${max_actions_per_traj}
+  max_tokens_per_step: ${max_tokens_per_step}
+  env_manager_cls: roll.pipeline.agentic.env_manager.android_step_env_manager.AndroidStepEnvManager
+  use_thread_lock: false
+  max_env_step_concurrent: 32
+  env_config:
+    task: all_task
+    task_family: mobile_world
+    max_image_tokens: 600
+    group_size: 1
+    n_task: ${max_steps}
+    mode: "val"
+    success_threshold: 0.99
+    env_configs:
+      - service_url: ${android_servers.server1.service_url}
+        envs_num: ${android_servers.server1.envs_num}
+        console_ports: ${android_servers.server1.console_ports}
+        grpc_ports: ${android_servers.server1.grpc_ports}
+        adb_path: ${android_servers.server1.adb_path}
+      - service_url: ${android_servers.server2.service_url}
+        envs_num: ${android_servers.server2.envs_num}
+        console_ports: ${android_servers.server2.console_ports}
+        grpc_ports: ${android_servers.server2.grpc_ports}
+        adb_path: ${android_servers.server2.adb_path}
+
+custom_envs:
+  AndroidEnv-Train:
+    <<: *mobileworld
+
+  AndroidEnv-Val:
+    <<: *mobileworld

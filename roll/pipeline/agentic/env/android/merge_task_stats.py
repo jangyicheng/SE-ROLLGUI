@@ -12,9 +12,10 @@ from typing import Dict, Any, List, Tuple
 # 示例（合并到新目录）:
 # python merge_task_stats.py \
 #   --input-dirs \
-#   /HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/trajectories/2026-03-23_120554 \
-#   /HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/trajectories/2026-03-24_055558 \
-#   --output-dir /HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/trajectories/merged_Qwen3-VL-reflection
+#   /HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/trajectories/2026-03-23_133359 \
+#   /HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/trajectories/2026-03-24_103431 \
+#   /HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/trajectories/2026-03-24_120334 \
+#   --output-dir /HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/trajectories/merged_Qwen3-VL-8step
 
 # 示例（就地合并 A + B -> A）:
 # python merge_task_stats.py \

@@ -1,7 +1,7 @@
 import random
 import threading
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 import json
@@ -64,38 +64,49 @@ def load_task_stats():
     try:
         with open(LOG_FILE, 'r', encoding='utf-8') as f:
             loaded = json.load(f)
-        for task, data in loaded.items():
+
+        tasks_data = loaded.get("tasks", loaded) if isinstance(loaded, dict) else {}
+        for task, data in tasks_data.items():
             task_stats[task] = {
                 'assigned': 0,
-                'total_attempts': data['complete_attempts'],
-                'complete_attempts': data['complete_attempts'],
-                'success_count': data['success_count'],
-                'failure_count': data['failure_count'],
-                'average_steps': data['average_steps'],
-                'average_time': data['average_time'],
-                'average_success_rate': data['average_success_rate']
+                'total_attempts': data.get('total_attempts', data.get('complete_attempts', 0)),
+                'complete_attempts': data.get('complete_attempts', 0),
+                'success_count': data.get('success_count', 0),
+                'failure_count': data.get('failure_count', 0),
+                'average_steps': data.get('average_steps', 0),
+                'average_time': data.get('average_time', 0.0),
+                'average_success_rate': data.get('average_success_rate', 0.0),
+                'returned_count': data.get('returned_count', 0),
+                'last_return_reason': data.get('last_return_reason'),
+                'last_return_time': data.get('last_return_time'),
             }
         initialized = bool(task_stats)
     except FileNotFoundError:
         pass
     except Exception as e:
         print(f"Failed to load task_stats: {e}")
-
-
+        
 def save_task_stats():
-    global last_save_time 
+    global last_save_time
     try:
+        if not LOG_FILE:
+            return
+
         to_save = {
             task: {
+                'total_attempts': stats['total_attempts'],
                 'complete_attempts': stats['complete_attempts'],
                 'success_count': stats['success_count'],
                 'failure_count': stats['failure_count'],
                 'average_steps': stats['average_steps'],
                 'average_time': stats['average_time'],
-                'average_success_rate': stats['average_success_rate']
+                'average_success_rate': stats['average_success_rate'],
+                'returned_count': stats.get('returned_count', 0),
+                'last_return_reason': stats.get('last_return_reason'),
+                'last_return_time': stats.get('last_return_time'),
             }
             for task, stats in sorted(task_stats.items())
-            if stats['complete_attempts'] >= 1 
+            if stats['complete_attempts'] >= 1 or stats.get('returned_count', 0) >= 1
         }
         global_stats = compute_global_stats()
         final_data = {
@@ -145,6 +156,10 @@ class CompleteTaskRequest(BaseModel):
     steps: int
     time: float
 
+class ReturnTaskRequest(BaseModel):
+    task: str
+    reason: str = "env_failed"
+    rollback_total_attempts: bool = True
 
 class TaskResponse(BaseModel):
     task: str
@@ -155,15 +170,18 @@ async def initialize(req: InitializeRequest):
     global initialized, GROUP_SIZE, N_TASK ,current_batch_task, current_batch_remaining, timestamp , GLOBAL_SEED , global_step , LOG_FILE
 
     empty_stats = {
-        'assigned': 0,
-        'total_attempts': 0,
-        'complete_attempts': 0,
-        'success_count': 0,
-        'failure_count': 0,
-        'average_steps': 0,
-        'average_time': 0.0,
-        'average_success_rate': 0.0
-    }
+    'assigned': 0,
+    'total_attempts': 0,
+    'complete_attempts': 0,
+    'success_count': 0,
+    'failure_count': 0,
+    'average_steps': 0,
+    'average_time': 0.0,
+    'average_success_rate': 0.0,
+    'returned_count': 0,
+    'last_return_reason': None,
+    'last_return_time': None,
+}
 
     with lock:
         if initialized:
@@ -249,7 +267,7 @@ async def get_task():
 
         # 开启新批次：当前请求算第一个，剩余 GROUP_SIZE - 1 个
         current_batch_task = selected
-        current_batch_remaining = GROUP_SIZE - 1
+        current_batch_remaining = GROUP_SIZE - 1 - task_stats[selected]['assigned'] # 对于回退任务，可能 assigned 已经不为 0，因此需要减去已分配数量
 
         task_stats[selected]['total_attempts'] += 1
         task_stats[selected]['assigned'] += 1
@@ -263,24 +281,41 @@ async def complete_task(req: CompleteTaskRequest):
     global initialized
     with lock:
         if initialized:
-            print("Warning: complete_task reset initialized to False")
             initialized = False
         if req.task not in task_stats:
             raise HTTPException(status_code=404, detail=f"Task {req.task} not found")
+        
         stats = task_stats[req.task]
-        stats['assigned'] -= 1
-        old_complete = stats['complete_attempts']
-        stats['complete_attempts'] += 1
+        stats["assigned"] = max(stats["assigned"] - 1, 0)
+        old_complete = stats["complete_attempts"]
+        stats["complete_attempts"] += 1
         if req.success:
-            stats['success_count'] += 1
+            stats["success_count"] += 1
         else:
-            stats['failure_count'] += 1
-        stats['average_steps'] = (stats['average_steps'] * old_complete + req.steps) / stats['complete_attempts'] if stats['complete_attempts'] > 0 else 0
-        stats['average_time'] = (stats['average_time'] * old_complete + req.time) / stats['complete_attempts'] if stats['complete_attempts'] > 0 else 0.0
-        stats['average_success_rate'] = stats['success_count'] / stats['complete_attempts'] if stats['complete_attempts'] > 0 else 0.0
+            stats["failure_count"] += 1
+        stats["average_steps"] = (stats["average_steps"] * old_complete + req.steps) / stats["complete_attempts"] if stats["complete_attempts"] > 0 else 0
+        stats["average_time"] = (stats["average_time"] * old_complete + req.time) / stats["complete_attempts"] if stats["complete_attempts"] > 0 else 0.0
+        stats["average_success_rate"] = stats["success_count"] / stats["complete_attempts"] if stats["complete_attempts"] > 0 else 0.0
     print(f"complete task: {req.task}, success: {req.success}, steps: {req.steps}, time: {req.time:.2f}s")
     return {"message": "Completed"}
 
+@app.post("/return_task")
+async def return_task(req: ReturnTaskRequest):
+    with lock:
+        if req.task not in task_stats:
+            raise HTTPException(status_code=404, detail=f"Task {req.task} not found")
+
+        stats = task_stats[req.task]
+        stats['assigned'] = max(stats['assigned'] - 1, 0)
+        if req.rollback_total_attempts:
+            stats['total_attempts'] = max(stats['total_attempts'] - 1, 0)
+
+        stats['returned_count'] = stats.get('returned_count', 0) + 1
+        stats['last_return_reason'] = req.reason
+        stats['last_return_time'] = time.time()
+
+    print(f"return task: {req.task}, reason: {req.reason}, rollback_total_attempts={req.rollback_total_attempts}")
+    return {"message": "Returned"}
 
 @app.get("/stats")
 async def get_stats():

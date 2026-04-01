@@ -83,6 +83,8 @@ class VllmStrategy(InferenceStrategy):
         )
 
         self.is_lora = self.worker_config.model_args.lora_target is not None
+        # assert self.is_lora is True #debug
+        
         if self.is_lora:
             lora_kwargs = {
                 "enable_lora": True,

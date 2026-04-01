@@ -21,11 +21,12 @@ from roll.pipeline.agentic.tools.tool_env_wrapper import tool_wrapper
 from roll.distributed.scheduler.generate_scheduler import RequestScheduler
 from roll.distributed.scheduler.protocol import DataProto
 from roll.pipeline.agentic.agentic_config import EnvManagerConfig, AgenticConfig
-from roll.utils.constants import GenerateStopReason
+from roll.utils.constants import EpisodeStopReason, GenerateStopReason
 from roll.utils.functionals import pad_to_length, aggregate_metrics
 from roll.utils.logging import get_logger
 from roll.utils.str_utils import contains_renderable_field
 
+logger = get_logger()
 
 class GuiTrajEnvManager(BaseEnvManager):
     def __init__(self,
@@ -88,7 +89,9 @@ class GuiTrajEnvManager(BaseEnvManager):
             tokenizer=self.tokenizer,
             env=self.env
         )
-
+        self.last_reset_failed = False
+        self.last_reset_failure_info = None
+        
     def run_rollout_loop(self, data: DataProto):
         """
         1. Each time run_rollout_loop is called,
@@ -109,36 +112,65 @@ class GuiTrajEnvManager(BaseEnvManager):
         start_step = self.current_step
 
         log_stats = {"generate_time": [], "step_time": [], "current_step": []}
+        self.stop_reason = EpisodeStopReason.FINISH
 
         while self.running and rollout_cache is not None:
 
             with Timer(name="generate", logger=None) as generate_timer:
                 lm_output: DataProto = self.make_decision(rollout_cache)
-                stop_reason = lm_output.meta_info.pop("stop_reason")
+                generation_stop_reason = lm_output.meta_info.pop("stop_reason")
+                # Convert GenerateStopReason.MAX_LENGTH to EpisodeStopReason.MAX_LENGTH
+                # Similar to agent_native_env_manager.py:74-77
+                if generation_stop_reason == GenerateStopReason.MAX_LENGTH:
+                    self.stop_reason = EpisodeStopReason.MAX_LENGTH
+                elif generation_stop_reason == GenerateStopReason.ABORT:
+                    self.stop_reason = EpisodeStopReason.ABORT
             log_stats["current_step"].append(self.current_step)
             log_stats["generate_time"].append(generate_timer.last)
 
             with Timer(name="step", logger=None) as step_timer:
-                if stop_reason == GenerateStopReason.FINISH:
+                if generation_stop_reason in [GenerateStopReason.FINISH, GenerateStopReason.MAX_LENGTH]:
                     rollout_cache: RolloutCache = self.step(lm_output)
             log_stats["step_time"].append(step_timer.last)
 
-            if self.running and (rollout_cache.terminated or stop_reason == GenerateStopReason.MAX_LENGTH):
+            if self.running and (rollout_cache.terminated or generation_stop_reason == GenerateStopReason.MAX_LENGTH):
+                is_env_failed = bool(
+                    rollout_cache.history
+                    and isinstance(rollout_cache.history[-1], dict)
+                    and rollout_cache.history[-1].get("env_failed", False)
+                )
+            
                 # 使用动态分配的 group_id
                 self.logger.debug(f"group_id: {self.current_group_id} env_id: {self.env_config['env_id']} episode_id: {self.episode_id} start_step {start_step} gen_stats: {log_stats}")
                 log_stats = {"generate_time": [], "step_time": [], "current_step": []}
-
-                rollout: DataProto = self.formulate_rollouts(rollout_cache)
-                # traj_group_id = f"{self.rollout_cache.tag}_{self.rollout_cache.group_id}_{self.episode_id}_{self.group_seed}"
-                traj_group_id = f"{self.rollout_cache.tag}_{self.rollout_cache.group_id}_{self.episode_id}"
-                traj_id = f"{traj_group_id}_{self.rollout_cache.env_id}"
-                rollout.non_tensor_batch["traj_group_id"] = np.array([traj_group_id] * rollout.batch.batch_size[0], dtype=object)
-                rollout.non_tensor_batch["traj_id"] = np.array([traj_id] * rollout.batch.batch_size[0], dtype=object)
-                # 使用动态分配的 group_id 提交
-                ray.get(self.output_queue.put.remote(self.current_group_id, self.episode_id, start_step, rollout))
+                
+                if is_env_failed:
+                    self.logger.warning(
+                        f"skip failed trajectory, put None. group_id={self.current_group_id}, "
+                        f"episode_id={self.episode_id}, task={self.current_task}, "
+                        f"reason={rollout_cache.history[-1].get('failure_reason')}"
+                    )
+                    # 为了对齐，实际上没意义
+                    ray.get(self.output_queue.put.remote(self.current_group_id, self.episode_id, start_step, None))
+                else:
+                    rollout: DataProto = self.formulate_rollouts(rollout_cache)
+                    # traj_group_id = f"{self.rollout_cache.tag}_{self.rollout_cache.group_id}_{self.episode_id}_{self.group_seed}"
+                    traj_group_id = f"{self.rollout_cache.tag}_{self.rollout_cache.group_id}_{self.episode_id}"
+                    traj_id = f"{traj_group_id}_{self.rollout_cache.env_id}"
+                    rollout.non_tensor_batch["traj_group_id"] = np.array([traj_group_id] * rollout.batch.batch_size[0], dtype=object)
+                    rollout.non_tensor_batch["traj_id"] = np.array([traj_id] * rollout.batch.batch_size[0], dtype=object)
+                    # 使用动态分配的 group_id 提交
+                    ray.get(self.output_queue.put.remote(self.current_group_id, self.episode_id, start_step, rollout))
 
                 rollout_cache = self.reset()
                 start_step = self.current_step
+                self.stop_reason = EpisodeStopReason.FINISH
+
+                # 连续 reset 失败也要持续 put(None) 再拿下一条
+                while self.running and rollout_cache is None and self.last_reset_failed:
+                    ray.get(self.output_queue.put.remote(self.current_group_id, self.episode_id, start_step, None))
+                    rollout_cache = self.reset()
+                    start_step = self.current_step
 
         # 退出信号：使用最后分配的 group_id（如果有的话）
         exit_group_id = self.current_group_id if self.current_group_id is not None else 0
@@ -149,6 +181,8 @@ class GuiTrajEnvManager(BaseEnvManager):
         assignment = ray.get(self.output_queue.get_episode_id.remote())
         if assignment is None:
             self.running = False
+            self.last_reset_failed = False
+            self.last_reset_failure_info = None
             return None
 
         self.current_group_id = assignment['group_id']
@@ -163,8 +197,19 @@ class GuiTrajEnvManager(BaseEnvManager):
 
         with self.thread_lock, self.env_step_limiter:
             observation, info = self.env.reset(seed=seed, target_task=self.current_task)
-            if observation is None:
-                return None
+        
+        if observation is None and isinstance(info, dict) and info.get("env_failed", False):
+            self.last_reset_failed = True
+            self.last_reset_failure_info = info
+            self.logger.warning(
+                f"reset failed, skip episode. group_id={self.current_group_id}, "
+                f"episode_id={self.episode_id}, task={self.current_task}, reason={info.get('failure_reason')}"
+            )
+            return None
+
+        self.last_reset_failed = False
+        self.last_reset_failure_info = None
+        
         self.rollout_cache.history.append({
             "observation": observation,
             "actions_left": self.env_config.max_steps - self.rollout_cache.step,
@@ -174,10 +219,25 @@ class GuiTrajEnvManager(BaseEnvManager):
         return self.rollout_cache
 
     def step(self, llm_output: DataProto):
-        responses = self.tokenizer.batch_decode(llm_output.batch['responses'], skip_special_tokens=False)
+        if llm_output.batch is not None:
+            response = self.tokenizer.batch_decode(llm_output.batch['responses'], skip_special_tokens=False)[0]
+        else:
+            # When MAX_LENGTH, batch may be None, pass stop_reason as action
+            response = self.stop_reason if self.stop_reason else ""
 
         with self.thread_lock, self.env_step_limiter:
-            observation, reward, terminated, truncated, info = self.env.step(action=responses[0])
+            observation, reward, terminated, truncated, info = self.env.step(action=response)
+        
+        if isinstance(info, dict) and info.get("env_failed", False):
+            self.rollout_cache.step += 1
+            self.rollout_cache.terminated = True
+            self.rollout_cache.truncated = True
+            self.rollout_cache.history[-1]['reward'] = 0.0
+            self.rollout_cache.history[-1]['llm_response'] = response
+            self.rollout_cache.history[-1].update(info)
+            self.rollout_cache.history[-1]['env_failed'] = True
+            return self.rollout_cache
+        
         suffix = info.pop("suffix", None)
 
         self.rollout_cache.step += 1
@@ -188,7 +248,7 @@ class GuiTrajEnvManager(BaseEnvManager):
             if not terminated:
                 self.rollout_cache.truncated = True
         self.rollout_cache.history[-1]['reward'] = reward
-        self.rollout_cache.history[-1]['llm_response'] = responses[0]
+        self.rollout_cache.history[-1]['llm_response'] = response
         if info is not None:
             self.rollout_cache.history[-1].update(info)
 
@@ -280,7 +340,11 @@ class GuiTrajEnvManager(BaseEnvManager):
 
         input_ids = torch.tensor(input_ids, dtype=torch.long).unsqueeze(0)
         attention_mask = torch.tensor([1] * input_ids.shape[1], dtype=torch.long).unsqueeze(0)
-        position_ids = attention_mask.cumsum(dim=-1)
+        # Huggingface Transformers prefer position_ids to be 0-based.
+        # Attn Mask: [1, 1, 1, ..., 1, 0, 0, ..., 0]
+        # cumsum: [1, 2, 3, ..., n, n+1, n+1, ..., n+1]
+        # cumsum - 1: [0, 1, 2, ..., n-1, n, n, ..., n]
+        position_ids = attention_mask.cumsum(dim=-1) - 1
         lm_input = DataProto()
         lm_input.batch = TensorDict({
             "input_ids": input_ids,
@@ -393,8 +457,8 @@ class AndroidEnvGroupFilter:
         if self.mode == "val":
             return False
         
-        logger.info("Filtering is disabled for now")
-        return False
+        # logger.info("Filtering is disabled for now")
+        # return False
 
         group_episode_reward = np.array([rollout.non_tensor_batch["episode_scores"][0] for rollout in group])
         reward_mean = group_episode_reward.mean()

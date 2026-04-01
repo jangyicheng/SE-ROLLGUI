@@ -10,8 +10,8 @@ hydra:
     dir: .
   output_subdir: null
 
-
-Model:  Qwen3-VL-8B-Instruct #GUI-Owl-1.5-8B-Instruct # Qwen3-VL-30B-A3B-Instruct # MAI-UI-8B # Qwen3-VL-8B-Thinking #
+# Qwen3-VL-8B-Instruct #
+Model: Qwen3-VL-4B-Instruct # UI-Voyager # GUI-Owl-1.5-8B-Instruct # Qwen3-VL-30B-A3B-Instruct # MAI-UI-8B # Qwen3-VL-8B-Thinking #
 exp_name: ${Model}
 seed: 42
 logging_dir: ./output/logs
@@ -19,25 +19,26 @@ output_dir: ./output
 render_save_dir: ./output/render
 system_envs:
   USE_MODELSCOPE: '1'
+  # ROLL_LOG_LEVEL: "DEBUG"
 
-track_with: swanlab
-tracker_kwargs:
-  api_key: 4FsBwIEyUhCvOwlPJyr7g
-  project: GUIAgent-Online-RL
-  name: ${exp_name}
-  tags: 
-    - online_rl
-    - grpo
-  group: training
-  description: GUI online RL
-  log_dir: roll_exp/android
+# track_with: swanlab
+# tracker_kwargs:
+#   api_key: 4FsBwIEyUhCvOwlPJyr7g
+#   project: GUIAgent-Online-RL
+#   name: ${exp_name}
+#   tags: 
+#     - online_rl
+#     - grpo
+#   group: training
+#   description: GUI online RL
+#   log_dir: roll_exp/android
 
 
 # ----------------------------------------------
 
 # 训练/评估流程配置
-max_steps: 3
-save_steps: 1
+max_steps: 16
+save_steps: 8
 logging_steps: 1
 eval_steps: -1
 resume_from_checkpoint: false
@@ -47,16 +48,12 @@ checkpoint_config:
 
 
 # 批处理大小与序列长度配置
-rollout_batch_size: 12 # the rollout trajectory size，也就是一批任务的数量
-val_batch_size: 4
+rollout_batch_size: 16 # the rollout trajectory size，也就是一批任务的数量
+val_batch_size: 16
+sequence_length: 2048
+async_generation_ratio: 4
 # prompt_length
 # response_length
-sequence_length: 11000
-async_generation_ratio: 2
-# 分布式训练配置
-# local_rank: 分布式训练中的本地排名（在当前节点内的排名）。
-# num_nodes: 可用于分布式训练的节点（物理服务器）数量。如果设置为 1，则表示在单个节点上进行分布式训练。
-num_gpus_per_node: 1
 
 
 # 调度与请求管理
@@ -84,40 +81,45 @@ max_grad_norm: 1.0
 
 # 预定义一些模型参数
 pretrain: /HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/Models/${Model}
-# pretrain: /HOME/hitsz_xdeng/hitsz_xdeng_2/.cache/huggingface/hub/models--Qwen--Qwen3-VL-4B-Instruct/snapshots/ebb281ec70b05090aa6165b016eac8ec08e71b17
+lora_target: o_proj,q_proj,k_proj,v_proj
+lora_rank: 32
+lora_alpha: 32
 
 
+# 在 DeepSpeed 训练中，全局训练批次大小是per_device_train_batch_size * 
+# gradient_accumulation_steps * world_size (即actor_train/critic的device_mapping长度) 
 
+# 分布式训练配置
+# local_rank: 分布式训练中的本地排名（在当前节点内的排名）。
+# num_nodes: 可用于分布式训练的节点（物理服务器）数量。如果设置为 1，则表示在单个节点上进行分布式训练。
+num_gpus_per_node: 4
+num_nodes : 1
 
 actor_train:
   model_args:
     attn_implementation: fa2
-    disable_gradient_checkpointing: true # if use lora, set to true; else set to false
+    disable_gradient_checkpointing: false  # if use lora, set to true; else set to false
     dtype: bf16
-    # lora_target: ${lora_target}
-    # lora_rank: ${lora_rank}
-    # lora_alpha: ${lora_alpha}
-    # model_type: ~
-    # freeze_module_prefix: vision_model
   training_args:
     learning_rate: 3.0e-6
     weight_decay: 0
     per_device_train_batch_size: 1
     gradient_accumulation_steps: 16
     warmup_steps: 0
-    lr_scheduler_type: cosine
+    lr_scheduler_type: linear #cosine
   data_args:
     template: native
   strategy_args:
    strategy_name: deepspeed_train
    strategy_config: ${deepspeed_zero3}
-  device_mapping: list(range(0,2))
+  device_mapping: list(range(0,1))
+  infer_batch_size: 16
 
 
 actor_infer:
   model_args:
     flash_attn: fa2
-    disable_gradient_checkpointing: true
+    disable_gradient_checkpointing: false
     dtype: bf16 # fp32 # 
   generating_args:
     max_new_tokens: 512 # single-turn response length
@@ -131,27 +133,27 @@ actor_infer:
   strategy_args:
     strategy_name: vllm
     strategy_config:
-      gpu_memory_utilization: 0.8
+      gpu_memory_utilization: 0.2
       block_size: 16
       load_format: auto
-      max_model_len: 32768
-  device_mapping: list(range(0,2))
+      max_model_len: 2048
+  num_gpus_per_worker: 1  
+  device_mapping: list(range(1,2))
   infer_batch_size: 1
 
 
 reference:
   model_args:
     attn_implementation: fa2
-    disable_gradient_checkpointing: true
+    disable_gradient_checkpointing: false
     dtype: bf16 # fp16
-    model_type: ~
   data_args:
     template: native
   strategy_args:
     strategy_name: hf_infer
     strategy_config: ~
-  device_mapping: list(range(0,2))
-  infer_batch_size: 2  # micro_batch_size
+  device_mapping: list(range(1,2))
+  infer_batch_size: 1  # micro_batch_size
 
 
 reward_normalization:
@@ -166,25 +168,25 @@ adb_path: /root/android-sdk/platform-tools/adb #我的adb路径  "/root/android-
 START_CONSOLE_PORT: 5554
 START_GRPC_PORT: 8554
 max_actions_per_traj: 40
-envs_num: 12 # 每个服务器的环境数量
-group_size: 3 # 每组环境的数量，应该能被envs_num整除
+envs_num: 16 # 每个服务器的环境数量
+group_size: 8 # 每组环境的数量，应该能被envs_num整除
 
 
 train_env_manager:
   max_env_num_per_worker: 32
-  num_env_groups: 8
+  num_env_groups: 4
   # under the same group, the env config and env seed are ensured to be equal
   group_size: ${group_size}
   tags: [AndroidEnv-Train]
-  num_groups_partition: [8] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
+  num_groups_partition: [4] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
   group_filter_cls: roll.pipeline.agentic.env_manager.gui_traj_env_manager.AndroidEnvGroupFilter
 
 val_env_manager:
-  max_env_num_per_worker: 4
-  num_env_groups: 12
+  max_env_num_per_worker: 32
+  num_env_groups: 32
   group_size: 1 # should be set to 1 because val temperature is set to 0 and same prompt leads to same output
   tags: [AndroidEnv-Val-Task]
-  num_groups_partition: [12] # TODO: If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
+  num_groups_partition: [32] # TODO: If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
   group_filter_cls: roll.pipeline.agentic.env_manager.gui_traj_env_manager.AndroidEnvGroupFilter
 
 
@@ -218,6 +220,8 @@ android_world: &android_world
     task: all_task
     task_family: android_world
     max_image_tokens: 600
+    group_size: ${train_env_manager.group_size}
+    mode: train
     env_configs:
       - service_url: ${android_servers.server1.service_url}
         envs_num: ${android_servers.server1.envs_num}

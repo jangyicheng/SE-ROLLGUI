@@ -9,11 +9,11 @@ from pathlib import Path
 import json
 from PIL import Image
 from datetime import datetime
-from .tasks import TASK_LIST
+from .tasks import TASK_LIST , TRAIN_TASK_LIST , FAIL_TASK_LIST , Information_Retrieval_TASK_LIST
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import functools
 logger = get_logger()
-
+TIMEOUT = 240
 
 def log_time_on_error(func):
     @functools.wraps(func)
@@ -59,6 +59,7 @@ class RemoteAndroidEnv(Env):
         self.service_url = kwargs.get("service_url", os.environ.get("ANDROID_ENV_SERVICE", "http://localhost:18000")).rstrip("/")
         self.env_id = kwargs.get("android_env_id", 0)
         self.task_manager_url = kwargs.get("task_manager_url", "http://localhost:5001")
+        self.mode = kwargs.get("mode", mode)
         
         # 端口解析 (保持原逻辑并增加轻微健壮性)
         self.console_ports = eval(console_ports) if isinstance(console_ports, str) else console_ports
@@ -71,19 +72,23 @@ class RemoteAndroidEnv(Env):
         
         self.max_steps = max_steps
         self.task_family = task_family
-        
+        self.adb_path = adb_path
+        self.max_image_tokens = max_image_tokens
+        self.assigned_task = None 
 
-        
         # 任务初始化
-        if task == "all_task":
-            num = eval(envs_num) if isinstance(envs_num, str) else envs_num
-            task_list = TASK_LIST[:num]
+        if task == "all_task":  
+            task_list = TASK_LIST + Information_Retrieval_TASK_LIST if mode == "val" else TRAIN_TASK_LIST
+            task_list = ["FilesDeleteFile" , "MarkorEditNote" , "RecipeDeleteDuplicateRecipes" , "ExpenseDeleteMultiple2"]
+            #["MarkorMoveNote","FilesMoveFile","FilesDeleteFile","MarkorDeleteAllNotes","ClockTimerEntry","MarkorCreateNoteFromClipboard","RecipeDeleteDuplicateRecipes"]
         else:
             task_list = task.split(",") if task else []
             
         if mode == "train":
             n_task = int(1e9) # 训练模式下不限制任务数量
-
+            if self.env_id == 0:
+                print("训练模式下的任务列表:", task_list)
+                
         data = requests.post(f"{self.task_manager_url}/initialize", json={"task_list": task_list , "group_size": group_size, "n_task": n_task})
         time_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
         self.timestamp = data.json().get("timestamp", time_str)
@@ -96,9 +101,50 @@ class RemoteAndroidEnv(Env):
         self.current_steps = 0
         self.start_time = None
         self.task = None
+        self._task_returned_for_current_episode = False
+        self._need_recover = False               
+
+    def _is_failed_payload(self, data):
+        if not data or not isinstance(data, dict):
+            return False
         
+        # 核心判断：FastAPI 的标准 500 错误
+        if data.get("detail") == "Internal Server Error" or data.get("detail") == "Env not found":
+            return True
+        
+        # 保留你原来的其他失败判断
+        return (
+            data.get("status") == "failed" or
+            (isinstance(data.get("info"), dict) and data["info"].get("error") is True)
+        )
+            
+    def _return_task_once(self, reason: str, rollback_total_attempts: bool = True):
+        if self.assigned_task is None or self._task_returned_for_current_episode:
+            return
+        try:
+            payload = {
+                "task": self.assigned_task,
+                "reason": reason,
+                "rollback_total_attempts": rollback_total_attempts,
+            }
+            requests.post(f"{self.task_manager_url}/return_task", json=payload, timeout=20)
+        except Exception as e:
+            logger.warning(f"return_task failed: {e}")
+        finally:
+            self._task_returned_for_current_episode = True
 
-
+    def _try_recover(self):
+        try:
+            requests.post(f"{self.service_url}/close", json={"console_port": self.console_port}, timeout=10)
+        except Exception:
+            pass
+        try:
+            self._init_server(self.adb_path, self.max_image_tokens)
+            self._need_recover = False
+        except Exception as e:
+            logger.warning(f"recover failed: {e}")
+            self._need_recover = True
+            
     @retry(
         stop=stop_after_attempt(3),  # 最多尝试3次
         wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避等待
@@ -106,7 +152,7 @@ class RemoteAndroidEnv(Env):
     )
     @log_time_on_error
     def call_init(self,payload):
-        return requests.post(f"{self.service_url}/init", json=payload, timeout=240)
+        return requests.post(f"{self.service_url}/init", json=payload, timeout=TIMEOUT)
     
     @retry(
         stop=stop_after_attempt(3),  # 最多尝试3次
@@ -115,7 +161,7 @@ class RemoteAndroidEnv(Env):
     )
     @log_time_on_error
     def call_reset(self, payload):
-        resp = requests.post(f"{self.service_url}/reset", json=payload, timeout=240)
+        resp = requests.post(f"{self.service_url}/reset", json=payload, timeout=TIMEOUT)
         return resp.json()
     
     @retry(
@@ -125,7 +171,7 @@ class RemoteAndroidEnv(Env):
     )
     @log_time_on_error
     def call_step(self, payload):
-        resp = requests.post(f"{self.service_url}/step", json=payload, timeout=240)
+        resp = requests.post(f"{self.service_url}/step", json=payload, timeout=TIMEOUT)
         return resp.json()
 
     def _init_server(self, adb_path, max_image_tokens):
@@ -171,80 +217,115 @@ class RemoteAndroidEnv(Env):
 
 
 
-    def reset(self, go_home: bool = True, seed: int | None = None , target_task: str | None = None):
+    def reset(self, go_home: bool = True, seed: int | None = None, target_task: str | None = None):
         super().reset(seed=seed)
-        # 从 TaskManager 获取新任务
-        # resp = requests.get(f"{self.task_manager_url}/get_task")
-        # target_task = resp.json().get("task")
-        
-        if target_task == "finish":
-            while True: time.sleep(60)
 
-        # 环境状态重置
+        if target_task == "finish":
+            while True:
+                time.sleep(60)
+
         self.current_steps = 0
         self.start_time = time.time()
-        
+        self.assigned_task = target_task
+        self._task_returned_for_current_episode = False
+
         payload = {
             "console_port": self.console_port,
             "go_home": go_home,
             "task": target_task,
             "task_family": self.task_family
         }
-        
-        # resp = requests.post(f"{self.service_url}/reset", json=payload)
-        # data = resp.json()
-        data = self.call_reset(payload)
-        
-        self.current_obs = self._decode_obs(data)
-        self.task = data["task"] # 包含任务名、目标等
-        self.assigned_task = target_task
-        self.max_steps = self.task.get("max_steps", self.max_steps) # 已经考虑了框架的最大交互步数
 
-        # --- 初始化轨迹目录 ---
+        try:
+            data = self.call_reset(payload)
+        except Exception as e:
+            self._return_task_once(reason=f"reset_exception:{e}")
+            self._need_recover = True
+            self._try_recover()
+            return None, {
+                "env_failed": True,
+                "failed_stage": "reset",
+                "failure_reason": str(e),
+                "recoverable": True,
+            }
+
+        if self._is_failed_payload(data):
+            self._return_task_once(reason=f"reset_failed:{data.get('error', 'unknown')}")
+            self._need_recover = True
+            self._try_recover()
+            return None, {
+                "env_failed": True,
+                "failed_stage": "reset",
+                "failure_reason": data.get("error", "service returned status=failed"),
+                "recoverable": True,
+                "raw": data,
+            }
+
+        try:
+            self.current_obs = self._decode_obs(data)
+        except Exception as e:
+            logger.warning(f"Failed to decode observation: {e}, data is {data}")
+            assert False
+            
+        try:
+            self.task = data["task"]
+        except Exception as e:
+            logger.warning(f"Failed to get task: {e}, data is {data}")
+            assert False
+        self.max_steps = self.task.get("max_steps", self.max_steps)
+
         task_name = self.task.get("name", "unknown_task")
         timestamp = time.strftime("%Y%m%d_%H%M")
         self.current_task_dir = self.save_dir / f"{task_name}" / f"{timestamp}"
         self.current_task_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 存储任务元信息
+
         with open(self.current_task_dir / "meta.json", "w", encoding="utf-8") as f:
             json.dump(self.task, f, ensure_ascii=False, indent=4)
 
-        # 记录初始状态
         self._save_step_data(0, self.current_obs, action="RESET")
-        
         return self.current_obs, data["info"]
 
     def step(self, action: str | dict):
-        """
-        action: 执行的动作
-        """
         payload = {
             "console_port": self.console_port,
             "action": action
         }
-        
-        # resp = requests.post(f"{self.service_url}/step", json=payload)
-        data = self.call_step(payload)
-        
-        # if resp.status_code != 200:
-        #     return None, 0.0, True, None, {"error": resp.text}
-        # data = resp.json()
-            
+
+        try:
+            data = self.call_step(payload)
+        except Exception as e:
+            self._return_task_once(reason=f"step_exception:{e}")
+            self._need_recover = True
+            self._try_recover()
+            return self.current_obs, 0.0, True, None, {
+                "env_failed": True,
+                "failed_stage": "step",
+                "failure_reason": str(e),
+                "recoverable": True,
+            }
+
+        if self._is_failed_payload(data):
+            self._return_task_once(reason=f"step_failed:{data.get('error', 'unknown')}")
+            self._need_recover = True
+            self._try_recover()
+            return self.current_obs, 0.0, True, None, {
+                "env_failed": True,
+                "failed_stage": "step",
+                "failure_reason": data.get("error", "service returned status=failed"),
+                "recoverable": True,
+                "raw": data,
+            }
+
         obs_np = self._decode_obs(data)
         self.current_obs = obs_np
         self.current_steps += 1
-        
-        terminate = data.get("terminate", False) or (self.current_steps >= self.max_steps) 
-        
-        # --- 存储轨迹 ---
+        terminate = data.get("terminate", False) or (self.current_steps >= self.max_steps)
+
         self._save_step_data(self.current_steps, obs_np, action)
-        
+
         if terminate:
             elapsed_time = time.time() - self.start_time if self.start_time else 0
             success = data["info"].get("is_success", 0)
-            
-            # 通知 TaskManager
             completion_payload = {
                 "task": self.assigned_task,
                 "success": success > 0.5,
@@ -252,20 +333,17 @@ class RemoteAndroidEnv(Env):
                 "time": float(elapsed_time),
             }
             requests.post(f"{self.task_manager_url}/complete_task", json=completion_payload)
-            
-            #给completion_payload添加结束原因记录
-            # 补充代码：
+
             if self.current_steps >= self.max_steps:
                 completion_payload["termination_reason"] = "max_steps"
-            elif "terminate" in action:
-                completion_payload["termination_reason"] = "active terminate"            
+            elif isinstance(action, dict) and action.get("action") == "terminate":
+                completion_payload["termination_reason"] = "active terminate"
             else:
                 completion_payload["termination_reason"] = "success"
-             
-            # 存入最终状态到 meta
+
             with open(self.current_task_dir / "result.json", "w") as f:
                 json.dump(completion_payload, f, indent=4)
-        
+
         return obs_np, data["reward"], terminate, None, data["info"]
 
     def render(self, mode="rgb_array"):

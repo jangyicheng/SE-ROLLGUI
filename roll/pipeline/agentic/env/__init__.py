@@ -15,6 +15,10 @@ gem.register("sokoban_sandbox", entry_point="roll.pipeline.agentic.env.sandbox:S
 gem.register("android", entry_point="roll.pipeline.agentic.env.android:AndroidEnv")
 gem.register("remote_android", entry_point="roll.pipeline.agentic.env.android:RemoteAndroidEnv")
 gem.register("remote_multi_android", entry_point="roll.pipeline.agentic.env.android:RemoteMultiAndroidEnv")
+gem.register("remote_multi_mobile", entry_point="roll.pipeline.agentic.env.android:RemoteMultiMobileWorldEnv")
+gem.register("remote_mobileworld", entry_point="roll.pipeline.agentic.env.android.remote_mobileworld:RemoteMobileEnv")
+gem.register("remote_multi_mobileworld", entry_point="roll.pipeline.agentic.env.android.remote_multi_mobileworld:RemoteMultiMobileWorldEnv")
+
 
 try:
     # add webshop-minimal to PYTHONPATH

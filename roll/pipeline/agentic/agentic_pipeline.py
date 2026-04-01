@@ -192,7 +192,9 @@ class AgenticPipeline(BasePipeline):
 
                     batch = compute_discounted_returns(batch, self.pipeline_config.adv_estimator, self.pipeline_config.step_reward_gamma)
 
+                    logger.info(f"before adjust batch , total trajecotries in batch: {len(batch)}")
                     batch = self.adjust_batch(batch, mode=self.pipeline_config.batch_adjust_mode)
+                    logger.info(f"after adjust batch , total trajecotries in batch: {len(batch)}")
                     metrics.update(reduce_metrics(batch.meta_info.pop("metrics", {})))
 
                     with Timer(name="cal_ref_log_probs", logger=None) as cal_timer:
@@ -346,8 +348,9 @@ class AgenticPipeline(BasePipeline):
                             log_res.append(log_item)
                             if len(log_res) >= 10:
                                 break
-                        logger.info(json.dumps(log_res, ensure_ascii=False))
+                        # logger.info(json.dumps(log_res[-1:], ensure_ascii=False))
                         logger.info(json.dumps(metrics, ensure_ascii=False))
+                        logger.info(f"total trajecotries in batch: {len(batch)}")
 
                 metrics["time/step_log"] = log_timer.last
 

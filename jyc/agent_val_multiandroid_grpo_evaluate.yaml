@@ -10,8 +10,8 @@ hydra:
     dir: .
   output_subdir: null
 
-
-Model: Qwen3-VL-8B-Instruct #GUI-Owl-1.5-8B-Instruct # Qwen3-VL-30B-A3B-Instruct # MAI-UI-8B # Qwen3-VL-8B-Thinking #
+# Qwen3.5-4B # Qwen3-VL-4B-Instruct #
+Model: Qwen3-VL-4B-Instruct #Qwen3-VL-8B-Instruct #GUI-Owl-1.5-8B-Instruct # Qwen3-VL-30B-A3B-Instruct # MAI-UI-8B # Qwen3-VL-8B-Thinking #
 exp_name: ${Model}
 seed: 42
 logging_dir: ./output/logs
@@ -35,7 +35,7 @@ system_envs:
 # ----------------------------------------------
 
 # 训练/评估流程配置
-max_steps: 5  
+max_steps: 10  
 save_steps: 1
 logging_steps: 1
 eval_steps: 1
@@ -56,6 +56,7 @@ sequence_length: 11000
 # local_rank: 分布式训练中的本地排名（在当前节点内的排名）。
 # num_nodes: 可用于分布式训练的节点（物理服务器）数量。如果设置为 1，则表示在单个节点上进行分布式训练。
 num_gpus_per_node: 1
+num_nodes : 1
 
 
 # 调度与请求管理
@@ -123,7 +124,7 @@ adb_path: /root/android-sdk/platform-tools/adb #我的adb路径  "/root/android-
 START_CONSOLE_PORT: 5554
 START_GRPC_PORT: 8554
 max_actions_per_traj: 40
-envs_num: 12
+envs_num: 16
 
 train_env_manager:
   max_env_num_per_worker: 32
@@ -136,11 +137,11 @@ train_env_manager:
 
 val_env_manager:
   max_env_num_per_worker: 32
-  num_env_groups: 24
+  num_env_groups: 32
   # under the same group, the env config and env seed are ensured to be equal
   group_size: 1
   tags: [AndroidEnv-Val]
-  num_groups_partition: [24] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
+  num_groups_partition: [32] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
   group_filter_cls: roll.pipeline.agentic.env_manager.gui_traj_env_manager.AndroidEnvGroupFilter
 
 android_servers:
@@ -150,17 +151,14 @@ android_servers:
     console_ports: list(range(${START_CONSOLE_PORT}, ${START_CONSOLE_PORT}+2*${envs_num}, 2))
     grpc_ports: list(range(${START_GRPC_PORT}, ${START_GRPC_PORT}+2*${envs_num}, 2))
     adb_path: /root/android-sdk/platform-tools/adb
-    group_size: 1
-    n_task: ${max_steps}
+
 
   server2:
     service_url: http://localhost:18001
-    envs_num: ${envs_num} 
+    envs_num: ${envs_num}
     console_ports: list(range(${START_CONSOLE_PORT}, ${START_CONSOLE_PORT}+2*${envs_num}, 2))
     grpc_ports: list(range(${START_GRPC_PORT}, ${START_GRPC_PORT}+2*${envs_num}, 2))
     adb_path: /root/android-sdk/platform-tools/adb
-    group_size: 1
-    n_task: ${max_steps}
 
 android_world: &android_world
   env_type: remote_multi_android
@@ -173,23 +171,22 @@ android_world: &android_world
     task: all_task
     task_family: android_world
     max_image_tokens: 600
+    group_size: 1
+    n_task: ${max_steps}
+    mode: "val"
     env_configs:
       - service_url: ${android_servers.server1.service_url}
         envs_num: ${android_servers.server1.envs_num}
         console_ports: ${android_servers.server1.console_ports}
         grpc_ports: ${android_servers.server1.grpc_ports}
         adb_path: ${android_servers.server1.adb_path}
-        group_size: ${android_servers.server1.group_size}
-        n_task: ${android_servers.server1.n_task}
-        
 
       - service_url: ${android_servers.server2.service_url}
         envs_num: ${android_servers.server2.envs_num}
         console_ports: ${android_servers.server2.console_ports}
         grpc_ports: ${android_servers.server2.grpc_ports}
         adb_path: ${android_servers.server2.adb_path}
-        group_size: ${android_servers.server2.group_size}
-        n_task: ${android_servers.server2.n_task}
+
 
 custom_envs:
 

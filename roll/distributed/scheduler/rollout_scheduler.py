@@ -19,7 +19,9 @@ from roll.utils.import_utils import safe_import_class
 from roll.utils.logging import get_logger
 from roll.datasets.global_trajectory_cache import GlobalTrajectoryCacheManager,GlobalTrajectoryCache
 
-
+import logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = get_logger()
 
 @dataclass
@@ -210,7 +212,18 @@ class GroupQueue:
             self.complete.clear()
             await self.complete.wait()
             
-
+    def release_episode_slot(self, episode_id: int):
+        group = self.groups.get(episode_id)
+        if group is None:
+            return
+        before = group.running_rollouts
+        if before > 0:
+            group.running_rollouts -= 1
+            logger.info(f"release slot for episode {episode_id}, before={before}, after={group.running_rollouts}")
+        # 如果配置了 max_traj_per_env，唤醒等待协程
+        if self.max_traj_per_env is not None:
+            self.progress.set()
+         
 @ray.remote
 class GroupQueueManager:
     def __init__(self, config, env_manager_config: EnvManagerConfig, mode):
@@ -326,41 +339,52 @@ class GroupQueueManager:
         for q in self.group_queues.values():
             q.shutdown()
         self.progress.set()
+        
+    # def get_memory_snapshot(self):
+    #     try:
+    #         from roll.pipeline.agentic.memory_probe import collect_group_queue_memory_snapshot
+    #         return collect_group_queue_memory_snapshot(self)
+    #     except Exception as e:
+    #         logger.debug("group queue memory snapshot failed: %s", e)
+    #         return {}
 
     def put(self, group_id, episode_id, start_step, rollout: DataProto):
-        if rollout is None:
-            return
-        q = self.group_queues.get(group_id)
-        if q is None:
-            return
+        assert group_id in self.group_queues
         
-        
-        # 仅在评测模式下瘦身 rollout：保留评测必需字段，去掉 prompt/轨迹等大字段
-        if self.mode in ("val"):
-            keep_batch_keys = [k for k in ("scores",) if k in rollout.batch.keys()]
-            keep_non_tensor_batch_keys = [
-            k for k in (
-                "episode_scores",
-                "step_scores",
-                "tags",
-                "env_ids",
-                "group_ids",
-                "traj_group_id",
-                "traj_id",
-                "traj_rollout_time",
-                "traj_env_time",
+        if rollout is None and self.mode == "train":
+            self.group_queues[group_id].release_episode_slot(episode_id)
+            logger.warning(
+                f"drop None rollout and release slot: group={group_id}, episode={episode_id}, start_step={start_step}"
             )
-            if k in rollout.non_tensor_batch
-        ]
-            keep_meta_info_keys = [k for k in ("metrics", "task") if k in rollout.meta_info]
+            return
 
-            rollout = rollout.select(
-                batch_keys=keep_batch_keys,
-                non_tensor_batch_keys=keep_non_tensor_batch_keys,
-                meta_info_keys=keep_meta_info_keys,
-                deepcopy=False,
-            )
-        q.put(episode_id, start_step, rollout)
+        # 仅在评测模式下瘦身 rollout：保留评测必需字段，去掉 prompt/轨迹等大字段
+        if rollout:
+            if self.mode in ("val"):
+                keep_batch_keys = [k for k in ("scores",) if k in rollout.batch.keys()]
+                keep_non_tensor_batch_keys = [
+                k for k in (
+                    "episode_scores",
+                    "step_scores",
+                    "tags",
+                    "env_ids",
+                    "group_ids",
+                    "traj_group_id",
+                    "traj_id",
+                    "traj_rollout_time",
+                    "traj_env_time",
+                )
+                if k in rollout.non_tensor_batch
+            ]
+                keep_meta_info_keys = [k for k in ("metrics", "task") if k in rollout.meta_info]
+
+                rollout = rollout.select(
+                    batch_keys=keep_batch_keys,
+                    non_tensor_batch_keys=keep_non_tensor_batch_keys,
+                    meta_info_keys=keep_meta_info_keys,
+                    deepcopy=False,
+                )
+        self.group_queues[group_id].put(episode_id, start_step, rollout)
 
 
     async def get_batch(self, batch_size, current_step) -> List[DataProto]:
@@ -382,6 +406,7 @@ class GroupQueueManager:
                 asyncio.create_task(q.get(), name=str(gid))
                 for gid, q in self.group_queues.items()
             }
+            
             # assert self.group_queues, "No group queues available"
 
             if not tasks:
@@ -430,7 +455,7 @@ class GroupQueueManager:
             d.meta_info["get_batch_return_start_time"] = get_batch_return_start_time
         print(f"get_batch returning {len(ret)} rollouts, current_step={current_step}, batch_size={batch_size}")
         return ret
-
+    
 class RolloutScheduler:
     """
     Usage:
@@ -487,17 +512,22 @@ class RolloutScheduler:
 
         self.rollout_task = None
         try:
-            self.manager = ray.get_actor("global_traj_manager")
+            self.manager = ray.get_actor("global_traj_manager", namespace="roll")  # 明确指定 namespace 更安全
         except ValueError:
-            # 不存在，创建新的
-            self.manager = GlobalTrajectoryCacheManager.options(name="global_traj_manager").remote()
+            self.manager = GlobalTrajectoryCacheManager.options(
+                name="global_traj_manager",
+                namespace="roll",          
+                get_if_exists=True        
+            ).remote()
 
-        # 同理处理 cache actor
         try:
-            self.cache = ray.get_actor("global_traj_cache")
+            self.cache = ray.get_actor("global_traj_cache", namespace="roll")
         except ValueError:
-            self.cache = GlobalTrajectoryCache.options(name="global_traj_cache").remote()
-
+            self.cache = GlobalTrajectoryCache.options(
+                name="global_traj_cache",
+                namespace="roll",
+                get_if_exists=True
+            ).remote()
 
     async def shutdown(self):
         if self.rollout_task is None:

@@ -10,8 +10,15 @@ export DASHBOARD_PORT=8299
 
 # bash emulator_stop.sh
 # bash emulator_start.sh
+MODEL_PARAM=$1
+
+CONFIG_NAME="agent_val_multiandroid_grpo"
+if [ "$MODEL_PARAM" = "lora" ]; then
+    CONFIG_NAME="agent_val_multiandroid_grpo_lora"
+fi
+
 
 
 python jyc/start_agentic_pipeline.py \
     --config_path "." \
-    --config_name agent_val_multiandroid_grpo
+    --config_name $CONFIG_NAME

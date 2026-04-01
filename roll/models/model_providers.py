@@ -3,7 +3,6 @@ from typing import List, Optional
 
 import torch
 from peft import LoraConfig, TaskType, get_peft_model
-# from transformers import AutoModelForImageTextToText as AutoModelForVision2Seq
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -15,6 +14,7 @@ from transformers import (
     PreTrainedTokenizer,
     TrainingArguments,
 )
+# from transformers import AutoModelForImageTextToText as AutoModelForVision2Seq
 from transformers.dynamic_module_utils import get_cached_module_file
 from transformers.integrations import is_deepspeed_zero3_enabled
 from transformers.modeling_utils import is_fsdp_enabled
