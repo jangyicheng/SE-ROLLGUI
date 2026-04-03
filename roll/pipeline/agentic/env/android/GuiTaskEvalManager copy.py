@@ -10,16 +10,6 @@ from datetime import datetime
 import asyncio
 import hashlib
 import os
-import argparse
-from pathlib import Path
-from typing import Any
-
-# ===== 全局变量增加 ===== {#-全局变量增加-  data-source-line="520"}
-SCHEDULER_MODE = os.environ.get("TASK_MANAGER_MODE", "train").lower()
-TRAJECTORY_ROOT = os.environ.get(
-    "TRAJECTORY_ROOT",
-    "./trajectories",
-)
 
 # 全局变量
 last_save_time = 0.0
@@ -31,8 +21,8 @@ task_stats: Dict[str, Dict] = {}
 initialized = False
 LOG_FILE = None
 # 批次分配状态
-current_batch_task: Optional[str] = None
-current_batches: Dict[str, int] = {}
+current_batch_task: str = None
+current_batch_remaining: int = 0
 GLOBAL_SEED = 42
 global_step = 0
 timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -68,9 +58,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-
-def _dedup_task_list(task_list: List[str]) -> List[str]:
-    return list(dict.fromkeys(task_list))
 
 def load_task_stats():
     global initialized
@@ -157,33 +144,11 @@ def compute_global_stats():
     }
 
 
-
-
-def _build_info_locked() -> Dict[str, Any]:
-    return {
-        "initialized": initialized,
-        "mode": SCHEDULER_MODE,
-        "timestamp": timestamp,
-        "group_size": GROUP_SIZE,
-        "n_task": N_TASK,
-        "seed": GLOBAL_SEED,
-        "global_step": global_step,
-        "task_list": list(task_stats.keys()),
-        "task_count": len(task_stats),
-        "current_batch_task": current_batch_task,
-        "log_file": LOG_FILE,
-        "global_stats": compute_global_stats(),
-        "last_updated": time.time(),
-    }
-
-
 class InitializeRequest(BaseModel):
     task_list: List[str]
-    group_size: int = GROUP_SIZE
+    group_size: int = GROUP_SIZE  # 可在初始化时传入 group_size
     seed: int = 42
-    n_task: int = N_TASK
-    timestamp: Optional[str] = None
-    mode: Optional[str] = None
+    n_task: int = N_TASK  # 可在初始化时传入 n_task
 
 class CompleteTaskRequest(BaseModel):
     task: str
@@ -199,82 +164,54 @@ class ReturnTaskRequest(BaseModel):
 class TaskResponse(BaseModel):
     task: str
 
-@app.get("/info")
-async def get_info():
-    with lock:
-        return _build_info_locked()
 
 @app.post("/initialize")
 async def initialize(req: InitializeRequest):
-    global initialized, GROUP_SIZE, N_TASK, current_batch_task, current_batches
-    global timestamp, GLOBAL_SEED, global_step, LOG_FILE, SCHEDULER_MODE
+    global initialized, GROUP_SIZE, N_TASK ,current_batch_task, current_batch_remaining, timestamp , GLOBAL_SEED , global_step , LOG_FILE
 
     empty_stats = {
-        "assigned": 0,
-        "total_attempts": 0,
-        "complete_attempts": 0,
-        "success_count": 0,
-        "failure_count": 0,
-        "average_steps": 0,
-        "average_time": 0.0,
-        "average_success_rate": 0.0,
-        "returned_count": 0,
-        "last_return_reason": None,
-        "last_return_time": None,
-    }
-
-    incoming_tasks = _dedup_task_list(req.task_list)
-    requested_mode = (req.mode or SCHEDULER_MODE or "train").lower()
-    requested_timestamp = req.timestamp or time.strftime("%Y-%m-%d_%H%M%S")
+    'assigned': 0,
+    'total_attempts': 0,
+    'complete_attempts': 0,
+    'success_count': 0,
+    'failure_count': 0,
+    'average_steps': 0,
+    'average_time': 0.0,
+    'average_success_rate': 0.0,
+    'returned_count': 0,
+    'last_return_reason': None,
+    'last_return_time': None,
+}
 
     with lock:
         if initialized:
-            same_config = (
-                GROUP_SIZE == req.group_size
-                and N_TASK == req.n_task
-                and GLOBAL_SEED == req.seed
-                and list(task_stats.keys()) == incoming_tasks
-                and timestamp == requested_timestamp
-                and SCHEDULER_MODE == requested_mode
-            )
-            if same_config:
-                return {"message": "Already initialized", **_build_info_locked()}
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "message": "Task manager already initialized with different config",
-                    "current": _build_info_locked(),
-                },
-            )
+            print("Already initialized")
+            return {"message": "Already initialized" , "group_size": GROUP_SIZE ,"timestamp": timestamp}
 
-        if not incoming_tasks:
-            raise HTTPException(status_code=400, detail="task_list must not be empty")
 
         GROUP_SIZE = req.group_size
         N_TASK = req.n_task
         GLOBAL_SEED = req.seed
         global_step = 0
-        SCHEDULER_MODE = requested_mode
-        timestamp = requested_timestamp
-
+        # 可选：只保留本次 task_list
         task_stats.clear()
-        for task in incoming_tasks:
+
+        # for task in set(req.task_list):
+        #     task_stats[task] = dict(empty_stats)
+        unique_tasks = list(dict.fromkeys(req.task_list)) # 防止同名任务
+        for task in unique_tasks:
             task_stats[task] = dict(empty_stats)
 
         current_batch_task = None
-        current_batches.clear()
+        current_batch_remaining = 0
         initialized = True
-
-        LOG_FILE = str(
-            Path(TRAJECTORY_ROOT) / timestamp / "task_manager" / f"{SCHEDULER_MODE}.json"
-        )
-        Path(LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
-
-        print(
-            f"Initialized mode={SCHEDULER_MODE}, tasks={len(incoming_tasks)}, "
-            f"group_size={GROUP_SIZE}, seed={GLOBAL_SEED}, n_task={N_TASK}, timestamp={timestamp}"
-        )
-        return {"message": "Initialized", **_build_info_locked()}
+        timestamp = time.strftime("%Y-%m-%d_%H%M%S")
+        
+        LOG_FILE = f"/HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/ROLL/trajectories/{timestamp}/{timestamp}.json"
+        os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+        print(f"Initialized with {len(unique_tasks)} tasks, group_size: {GROUP_SIZE}, seed: {GLOBAL_SEED}, n_task: {N_TASK}")
+        
+    return {"message": "Initialized", "group_size": GROUP_SIZE , "timestamp": timestamp}
 
 
 @app.get("/get_task", response_model=TaskResponse)
@@ -283,34 +220,27 @@ async def get_task():
     任务分配逻辑：每次连续分配 GROUP_SIZE 个同类任务。
     当一个批次分配完毕后，根据调度算法选取下一个任务开启新批次。
     """
-    global current_batch_task, current_batches, GLOBAL_SEED, global_step
+    global current_batch_task, current_batch_remaining , GLOBAL_SEED , global_step
 
     with lock:
         if not task_stats:
-            # print(f"task_stats is {task_stats}")
             raise HTTPException(status_code=400, detail="TaskEvalManager not initialized")
 
-        # 继续当前批次（若存在且有剩余槽）
-        if current_batch_task is not None:
-            remaining = current_batches.get(current_batch_task, 0)
-            if remaining > 0 and current_batch_task in task_stats:
-                task = current_batch_task
-                current_batches[task] = remaining - 1
-                task_stats[task]['total_attempts'] += 1
-                task_stats[task]['assigned'] += 1
-                # 清理已耗尽的 reserved
-                if current_batches[task] == 0:
-                    del current_batches[task]
-                    current_batch_task = None
-                print(f"get task (batch continue): {task} (remaining: {current_batches.get(task, 0)})")
-                return TaskResponse(task=task)
+        # 如果当前批次仍有剩余，继续分配同一任务
+        if current_batch_remaining > 0 and current_batch_task is not None:
+            # 验证该任务仍然在 task_stats 中
+            if current_batch_task in task_stats:
+                current_batch_remaining -= 1
+                task_stats[current_batch_task]['total_attempts'] += 1
+                task_stats[current_batch_task]['assigned'] += 1
+                print(f"get task (batch continue): {current_batch_task} (remaining: {current_batch_remaining})")
+                return TaskResponse(task=current_batch_task)
             else:
-                # 任务被移除或无剩余槽，清理状态
-                if current_batch_task in current_batches:
-                    del current_batches[current_batch_task]
+                # 任务已被移除，重置批次
                 current_batch_task = None
+                current_batch_remaining = 0
 
-        # 开启新批次
+        # 批次已用完或无批次，选择新任务开启新批次
         sorted_tasks = sorted(
             task_stats.keys(),
             key=lambda t: (task_stats[t]['total_attempts'], task_stats[t]['assigned'])
@@ -322,6 +252,7 @@ async def get_task():
         if min_attempts >= N_TASK * GROUP_SIZE:
             print("get task: finish")
             current_batch_task = None
+            current_batch_remaining = 0
             return TaskResponse(task="finish")
 
         min_assigned = task_stats[best_task]['assigned']
@@ -334,19 +265,14 @@ async def get_task():
         selected = deterministic_choice(candidates, GLOBAL_SEED, global_step)
         global_step += 1
 
-        # 当前请求为该批次的第一个，剩余的 reserved 槽记录到 current_batches
-        reserved = max(GROUP_SIZE - 1, 0)
-        if reserved > 0:
-            current_batches[selected] = reserved
-            current_batch_task = selected
-        else:
-            current_batches.pop(selected, None)
-            current_batch_task = None
+        # 开启新批次：当前请求算第一个，剩余 GROUP_SIZE - 1 个
+        current_batch_task = selected
+        current_batch_remaining = GROUP_SIZE - 1
 
         task_stats[selected]['total_attempts'] += 1
         task_stats[selected]['assigned'] += 1
 
-        print(f"get task (new batch): {selected} (remaining: {current_batches.get(selected, 0)})")
+        print(f"get task (new batch): {selected} (remaining: {current_batch_remaining})")
         return TaskResponse(task=selected)
 
 
@@ -354,11 +280,11 @@ async def get_task():
 async def complete_task(req: CompleteTaskRequest):
     global initialized
     with lock:
-        if initialized: # 完成任务之后清除初始化状态
-            initialized = False 
+        if initialized:
+            initialized = False
         if req.task not in task_stats:
             raise HTTPException(status_code=404, detail=f"Task {req.task} not found")
-
+        
         stats = task_stats[req.task]
         stats["assigned"] = max(stats["assigned"] - 1, 0)
         old_complete = stats["complete_attempts"]
@@ -375,29 +301,14 @@ async def complete_task(req: CompleteTaskRequest):
 
 @app.post("/return_task")
 async def return_task(req: ReturnTaskRequest):
-    global current_batches, current_batch_task
     with lock:
         if req.task not in task_stats:
             raise HTTPException(status_code=404, detail=f"Task {req.task} not found")
 
         stats = task_stats[req.task]
-
-        # 减少 assigned（若确实被分配）
-        if stats.get('assigned', 0) > 0:
-            stats['assigned'] = max(stats['assigned'] - 1, 0)
-
-        # 可选回退 total_attempts
+        stats['assigned'] = max(stats['assigned'] - 1, 0)
         if req.rollback_total_attempts:
             stats['total_attempts'] = max(stats['total_attempts'] - 1, 0)
-
-        # 仅为该任务回退一个 reserved 槽，上界为 GROUP_SIZE - assigned，避免超过容量
-        current_reserved = current_batches.get(req.task, 0)
-        capacity = max(GROUP_SIZE - stats.get('assigned', 0), 0)
-        if current_reserved < capacity:
-            current_batches[req.task] = current_reserved + 1
-            # 如果当前没有 active batch，优先把本任务设为 active（可选，保证下次连续分配）
-            if current_batch_task is None:
-                current_batch_task = req.task
 
         stats['returned_count'] = stats.get('returned_count', 0) + 1
         stats['last_return_reason'] = req.reason
@@ -430,27 +341,9 @@ async def get_stats():
 
 if __name__ == "__main__":
     import uvicorn
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--host", type=str, default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=5001)
-    parser.add_argument("--mode", type=str, default=os.environ.get("TASK_MANAGER_MODE", "train"))
-    parser.add_argument(
-        "--trajectory_root",
-        type=str,
-        default=os.environ.get(
-            "TRAJECTORY_ROOT",
-            "./trajectories",
-        ),
-    )
-    args = parser.parse_args()
-
-    SCHEDULER_MODE = args.mode.lower()
-    TRAJECTORY_ROOT = args.trajectory_root
-
     uvicorn.run(
         app,
-        host=args.host,
-        port=args.port,
+        host="0.0.0.0",
+        port=5001,
         workers=1,
     )

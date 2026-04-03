@@ -7,6 +7,7 @@ import time
 from roll.utils.logging import get_logger
 from pathlib import Path
 import json
+from typing import Any, Dict
 from io import BytesIO
 from PIL import Image
 from datetime import datetime
@@ -57,9 +58,10 @@ class RemoteMobileEnv(Env):
             os.environ.get("MOBILEWORLD_ENV_SERVICE", os.environ.get("ANDROID_ENV_SERVICE", "http://localhost:18000")),
         ).rstrip("/")
         self.env_id = kwargs.get("android_env_id", 0)
-        self.task_manager_url = kwargs.get("task_manager_url", "http://localhost:5001")
+        # self.task_manager_url = kwargs.get("task_manager_url", "http://localhost:5001")
         self.success_threshold = float(kwargs.get("success_threshold", 0.99))
-
+        self.mode = mode
+        
         # 端口解析 (保持原逻辑并增加轻微健壮性)
         self.console_ports = eval(console_ports) if isinstance(console_ports, str) else console_ports
         self.grpc_ports = eval(grpc_ports) if isinstance(grpc_ports, str) else grpc_ports
@@ -75,6 +77,21 @@ class RemoteMobileEnv(Env):
         self.max_image_tokens = max_image_tokens
         self.assigned_task = None
 
+
+        legacy_task_manager_url = kwargs.get("task_manager_url", None)
+        self.task_manager_train_url = kwargs.get(
+            "task_manager_train_url",
+            legacy_task_manager_url or "http://localhost:5001",
+        ).rstrip("/")
+        self.task_manager_eval_url = kwargs.get(
+            "task_manager_eval_url",
+            legacy_task_manager_url or "http://localhost:5002",
+        ).rstrip("/")
+
+        self.task_manager_url = (
+            self.task_manager_train_url if self.scheduler_mode == "train" else self.task_manager_eval_url
+        )
+
         # 任务初始化
         if task == "all_task":
             task_list = MOBILEWORLD_TASK_LIST
@@ -83,13 +100,22 @@ class RemoteMobileEnv(Env):
 
         if mode == "train":
             n_task = int(1e9)  # 训练模式下不限制任务数量
-
-        data = requests.post(
-            f"{self.task_manager_url}/initialize",
-            json={"task_list": task_list, "group_size": group_size, "n_task": n_task},
+        if self.env_id == 0:
+            logger.info(
+                f"[task-manager-init] mode={self.scheduler_mode}, tasks={len(task_list)}, "
+                f"n_task={n_task}"
+            )
+            
+        shared_timestamp = kwargs.get("shared_task_timestamp", None)
+        seed = int(kwargs.get("task_seed", 42))
+        self.timestamp = self._initialize_active_task_manager(
+            task_list=task_list,
+            group_size=group_size,
+            n_task=n_task,
+            seed=seed,
+            shared_timestamp=shared_timestamp,
         )
-        time_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        self.timestamp = data.json().get("timestamp", time_str)
+        
         self.save_dir = Path(save_dir) / f"{self.timestamp}"
         self.current_task_dir = None
         # 远程 Server 初始化
@@ -112,7 +138,100 @@ class RemoteMobileEnv(Env):
         if data.get("observation") is None:
             return True
         return False
+    def _return_task_once(self, reason: str, rollback_total_attempts: bool = True):
+        if self.assigned_task is None or self._task_returned_for_current_episode:
+            return
+        try:
+            payload = {
+                "task": self.assigned_task,
+                "reason": reason,
+                "rollback_total_attempts": rollback_total_attempts,
+            }
+            requests.post(f"{self.task_manager_url}/return_task", json=payload, timeout=20)
+        except Exception as e:
+            logger.warning(f"return_task failed: {e}")
+        finally:
+            self._task_returned_for_current_episode = True
+            
 
+    def _http_get_json(self, url: str, timeout: int = 20) -> Dict[str, Any]:
+        resp = requests.get(url, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _http_post_json(self, url: str, payload: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
+        resp = requests.post(url, json=payload, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _resolve_active_manager(self) -> str:
+        return self.task_manager_train_url if self.scheduler_mode == "train" else self.task_manager_eval_url
+
+    def _resolve_peer_manager(self) -> str:
+        return self.task_manager_eval_url if self.scheduler_mode == "train" else self.task_manager_train_url
+
+    def _sync_timestamp_only(self, shared_timestamp: str | None) -> str:
+        """
+        只做 timestamp 协调，不初始化对端 manager。
+        优先级:
+        1) 显式 shared_timestamp
+        2) 任一已初始化 manager 的 timestamp
+        3) 新生成 timestamp
+        """
+        if shared_timestamp:
+            return shared_timestamp
+
+        active_url = self._resolve_active_manager()
+        peer_url = self._resolve_peer_manager()
+
+        ts_candidates = []
+        for url in (active_url, peer_url):
+            try:
+                info = self._http_get_json(f"{url}/info")
+                if info.get("initialized") and info.get("timestamp"):
+                    ts_candidates.append(info["timestamp"])
+            except Exception:
+                pass
+
+        ts_candidates = list(dict.fromkeys(ts_candidates))
+        if len(ts_candidates) > 1:
+            raise RuntimeError(f"manager timestamp conflict: {ts_candidates}")
+        if len(ts_candidates) == 1:
+            return ts_candidates[0]
+        return datetime.now().strftime("%Y-%m-%d_%H%M%S")
+
+    def _initialize_active_task_manager(
+        self,
+        task_list: list[str],
+        group_size: int,
+        n_task: int,
+        seed: int,
+        shared_timestamp: str | None,
+    ) -> str:
+        active_url = self._resolve_active_manager()
+        final_timestamp = self._sync_timestamp_only(shared_timestamp)
+
+        payload = {
+            "task_list": task_list,
+            "group_size": group_size,
+            "n_task": n_task,
+            "seed": seed,
+            "timestamp": final_timestamp,
+            "mode": self.scheduler_mode,
+        }
+
+        try:
+            self._http_post_json(f"{active_url}/initialize", payload)
+            info = self._http_get_json(f"{active_url}/info")
+        except:
+            return final_timestamp
+
+        if info.get("timestamp") != final_timestamp:
+            raise RuntimeError(
+                f"active manager timestamp mismatch: expect={final_timestamp}, got={info.get('timestamp')}"
+            )
+        return final_timestamp
+    
     def _normalize_target_task(self, target_task):
         if not isinstance(target_task, dict):
             return target_task

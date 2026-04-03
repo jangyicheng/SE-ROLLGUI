@@ -3,10 +3,11 @@ cd ../.. && source /app/bin/proxy.sh && cd ./HDD_POOL/ROLL
 ssh -fN -L 18000:localhost:8000 -p 30115 root@121.46.19.2 
 ssh -fN -L 18001:localhost:8000 -p 30116 root@121.46.19.2 
 
-
-nohup python roll/pipeline/agentic/env/android/GuiTaskEvalManager.py \
-    > roll/pipeline/agentic/env/android/GuiTaskEvalManager.log 2>&1 &
+bash jyc/scripts/start_task_manager.sh both
 sh jyc/scripts/evaluate_agentic_pipeline.sh voyager
+# nohup python roll/pipeline/agentic/env/android/GuiTaskEvalManager.py \
+#     > roll/pipeline/agentic/env/android/GuiTaskEvalManager.log 2>&1 &
+
 
 # ========================================================================
 pip install tenacity
@@ -22,8 +23,7 @@ ssh -fN -L 18001:localhost:8000 -p 30116 root@121.46.19.2
 nohup python -u roll/pipeline/agentic/env/android/gpu_monitor.py \
     > roll/pipeline/agentic/env/android/monitor.log 2>&1 &
 
-nohup python roll/pipeline/agentic/env/android/GuiTaskEvalManager.py \
-    > roll/pipeline/agentic/env/android/GuiTaskEvalManager.log 2>&1 &
+bash jyc/scripts/start_task_manager.sh both
 sh jyc/scripts/run_agentic_pipeline.sh
 
 

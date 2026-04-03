@@ -47,6 +47,16 @@ def _plot_rank_chart(rank_df, title: str):
 
 
 def render_stats_mode(traj_root: Path, subset_name: str, subset_tasks: list[str]):
+    def format_stats_display(p: Path) -> str:
+        # 尝试获取父目录和祖父目录名称
+        parent = p.parent
+        grandparent = parent.parent if parent.parent else None
+
+        # 如果祖父目录存在且其名称不是 "trajectories"，则显示更完整路径
+        if grandparent and grandparent.name != "trajectories":
+            return f"{grandparent.name}/{p.name}"
+        else:
+            return f"{parent.name}/{p.name}"
     st.header("📈 轨迹统计可视化")
 
     stats_files = discover_stats_files(traj_root)
@@ -54,7 +64,7 @@ def render_stats_mode(traj_root: Path, subset_name: str, subset_tasks: list[str]
         st.warning("未找到包含 tasks/global_stats 的统计JSON文件")
         return
 
-    selected_stats = st.sidebar.selectbox("统计文件", stats_files, format_func=lambda p: f"{p.parent.name}/{p.name}")
+    selected_stats = st.sidebar.selectbox("统计文件", stats_files, format_func=format_stats_display)
 
     stats_data = load_stats_json(selected_stats)
     df = tasks_to_df(stats_data)

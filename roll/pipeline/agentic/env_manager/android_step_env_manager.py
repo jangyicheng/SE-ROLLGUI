@@ -119,8 +119,6 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
         self.env_config["config"].update({
             "android_env_id": self.env_config["env_id"],
             "android_group_id": self.env_config["group_id"],
-            "max_steps": self.env_config["max_steps"],
-            "mode": self.mode
         })
         self.rollout_data_type = self.env_config.get("rollout_data_type", "trajectory")
         with self.thread_lock, self.env_step_limiter:

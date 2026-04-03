@@ -14,12 +14,11 @@ from tensordict import TensorDict
 from transformers import PreTrainedTokenizer, ProcessorMixin
 
 from roll.datasets.collator import DataCollatorWithPaddingForMM
-from roll.distributed.scheduler.router import RouterManager
+from roll.distributed.scheduler.generate_scheduler import RequestScheduler
 from roll.distributed.scheduler.protocol import DataProto
 from roll.distributed.scheduler.rollout_scheduler import GroupQueueManager
-from roll.models.model_providers import default_tokenizer_provider
 from roll.pipeline.agentic.agentic_config import AgenticConfig, EnvManagerConfig
-from roll.pipeline.agentic.env_manager.android_utils import read_memory
+from roll.pipeline.agentic.env_manager.android_utils import get_skill, read_memory
 from roll.pipeline.agentic.env_manager.base_env_manager import (
     BaseEnvManager,
     RolloutCache,
@@ -27,12 +26,11 @@ from roll.pipeline.agentic.env_manager.base_env_manager import (
 # from roll.pipeline.agentic.env_manager.traj_env_manager import TrajEnvManager
 from roll.pipeline.agentic.env_manager.gui_traj_env_manager import GuiTrajEnvManager 
 from roll.pipeline.agentic.llm_proxy import BaseLLMProxy, create_llm_proxy
-from roll.utils.constants import EpisodeStopReason, GenerateStopReason, RAY_NAMESPACE
+from roll.utils.constants import GenerateStopReason
 from roll.utils.env_action_limiter import get_global_limiter
 from roll.utils.functionals import aggregate_metrics, pad_to_length
 from roll.utils.hash_utils import compute_object_hash
 from roll.utils.logging import get_logger
-
 
 logger = get_logger()
 
@@ -124,7 +122,7 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
         )
         self.output_queue = output_queue
         self.mode = mode
-        self.generate_scheduler: RouterManager = generate_scheduler
+        self.generate_scheduler: RequestScheduler = generate_scheduler
 
         # EnvManager states
         self.rollout_cache: Optional[RolloutCache] = None
@@ -141,52 +139,15 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
         self.env_step_limiter = nullcontext()
         if self.max_env_step_concurrent > 0:
             env_tag = self.env_config.get("tag", "default")
-            self.env_step_limiter = get_global_limiter(tag=f"{env_tag}_{self.mode}", max_concurrent_calls=self.max_env_step_concurrent)
-
+            self.env_step_limiter = get_global_limiter(tag=env_tag, max_concurrent_calls=self.max_env_step_concurrent)
         self.env_config["config"].update({
             "android_env_id": self.env_config["env_id"],
             "android_group_id": self.env_config["group_id"],
-            "max_steps": self.env_config["max_steps"],
         })
-
-        # Initialize reward scheduler and reward proxy BEFORE creating the environment
-        # This allows passing reward components through env_config to the environment constructor
-        self.reward_scheduler: Optional[RouterManager] = None
-        self.reward_proxy: Optional[BaseLLMProxy] = None
-        self.reward_tokenizer: Optional[PreTrainedTokenizer] = None
-
-        # Create environment kwargs from config (convert OmegaConf to dict to avoid type errors)
-        env_kwargs = dict(self.env_config['config'])
-
-        # Try to get reward scheduler from Ray named actor
-        if self.pipeline_config.reward:
-            self.reward_scheduler = ray.get_actor(
-                name=f"RewardScheduler-{pipeline_config.reward.name}",
-                namespace=RAY_NAMESPACE
-            )
-            # Get reward tokenizer
-            self.reward_tokenizer = default_tokenizer_provider(
-                model_args=pipeline_config.reward.model_args
-            )
-            # Create reward proxy (without env reference since env doesn't exist yet)
-            self.reward_proxy = create_llm_proxy(
-                generate_scheduler=self.reward_scheduler,
-                llm_proxy_config=pipeline_config.reward.llm_proxy,
-                tokenizer=self.reward_tokenizer,
-                env=None,
-            )
-            self.logger.info(f"Initialized reward proxy with scheduler: RewardScheduler-{pipeline_config.reward.name}")
-
-            # Inject reward components into env_kwargs (not OmegaConf config)
-            env_kwargs['current_env_id'] = self.env_config["env_id"]
-            env_kwargs['reward_tokenizer'] = self.reward_tokenizer
-            env_kwargs['reward_proxy'] = self.reward_proxy
-            if self.pipeline_config.reward.generating_args:
-                env_kwargs['reward_generating_args'] = self.pipeline_config.reward.generating_args.to_dict()
+        self.rollout_data_type = self.env_config.get("rollout_data_type", "trajectory")
         with self.thread_lock, self.env_step_limiter:
-            self.env = gem.make(env_id=self.env_config["env_type"], **env_kwargs)
+            self.env = gem.make(env_id=self.env_config["env_type"], **self.env_config["config"])
 
-            
         self.agent_system_template = SYSTEM_PROMPT
 
         if "memory" in self.env_config:
@@ -205,9 +166,10 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
             env=self.env,
         )
 
-
         self.trajectory_cache: Optional[RolloutCache] = None
         self.keep_last_k = self.env_config.get("keep_last_k", 30)  # 仅保留最近的k轮对话历史
+
+
 
         
     @property
@@ -326,18 +288,18 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
             )
         )
         
-        # if self.env_config['env_id'] == 0:  
-        #     if len(recent_actions) > 3 and self.episode_id == 0:
-        #         self.logger.debug("=== Full messages (WITHOUT image base64) ===")
+        if self.env_config['env_id'] == 0:  
+            if len(recent_actions) == 3 and self.episode_id == 0:
+                self.logger.debug("=== Full messages (WITHOUT image base64) ===")
                 
-        #         # 打印 system message
-        #         self.logger.info(f"System: {self.agent_system_template}")
-        #         self.logger.info("-" * 80)
+                # 打印 system message
+                self.logger.info(f"System: {self.agent_system_template}")
+                self.logger.info("-" * 80)
                 
-        #         # 打印 user message（文本部分）
-        #         self.logger.info("User Message:")
-        #         self.logger.info(user_text)
-        #         self.logger.info("-" * 80)          
+                # 打印 user message（文本部分）
+                self.logger.info("User Message:")
+                self.logger.info(user_text)
+                self.logger.info("-" * 80)          
                       
         # lm_input_texts = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
         lm_input_texts = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)

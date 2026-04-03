@@ -3,8 +3,8 @@ import random
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
-
 import httpx
+
 import ray
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 from ray._private import profiling
@@ -18,6 +18,8 @@ from roll.utils.functionals import append_to_dict, GenerateRequestType
 from roll.utils.import_utils import safe_import_class
 from roll.utils.logging import get_logger
 from roll.datasets.global_trajectory_cache import GlobalTrajectoryCacheManager,GlobalTrajectoryCache
+from pathlib import Path
+from roll.distributed.scheduler.running_stats_utils import dump_running_batch_stats
 
 import logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -244,7 +246,6 @@ class GroupQueueManager:
             self.async_generation_ratio = 0
             self.max_traj_per_env = env_manager_config.max_traj_per_env if config.val_batch_size > 0 else None
 
-        self.task_manager_url = getattr(env_manager_config, "task_manager_url", "http://localhost:5001")
 
         self.next_group_id = 0
         self.task_to_group_id: Dict[str, int] = {}
@@ -258,7 +259,29 @@ class GroupQueueManager:
         self.quit = False
         
         self.max_traj_per_env = None # 不限制每个环境的轨迹数量，改为通过 group_filter 来控制
+        
+        task_manager_url = None
+        self.task_manager_train_url = getattr(
+            env_manager_config,
+            "task_manager_train_url",
+            task_manager_url or "http://localhost:5001",
+        )
+        self.task_manager_eval_url = getattr(
+            env_manager_config,
+            "task_manager_eval_url",
+            task_manager_url or "http://localhost:5002",
+        )
+        self.task_manager_url = self.task_manager_train_url if self.mode == "train" else self.task_manager_eval_url
 
+        self.trajectory_root = Path(
+            getattr(
+                env_manager_config,
+                "trajectory_root",
+                "./trajectories",
+            )
+        )
+        
+        # logger.info(f"self.mode is {self.mode} , self.task_manager_url is {self.task_manager_url}")
 
     def _get_or_create_group_queue(self, task: str) -> Tuple[int, GroupQueue]:
         if task in self.task_to_group_id:
@@ -386,7 +409,6 @@ class GroupQueueManager:
                 )
         self.group_queues[group_id].put(episode_id, start_step, rollout)
 
-
     async def get_batch(self, batch_size, current_step) -> List[DataProto]:
         """
         返回已完成的 rollouts，按 group 收集。
@@ -453,6 +475,16 @@ class GroupQueueManager:
         get_batch_return_start_time = time.time()
         for d in ret:
             d.meta_info["get_batch_return_start_time"] = get_batch_return_start_time
+        await dump_running_batch_stats(
+            ret=ret,
+            current_step=current_step,
+            batch_size=batch_size,
+            group_queues=self.group_queues,
+            mode=self.mode,
+            trajectory_root=self.trajectory_root,
+            task_manager_url=self.task_manager_url,
+            logger=logger,
+        )
         print(f"get_batch returning {len(ret)} rollouts, current_step={current_step}, batch_size={batch_size}")
         return ret
     

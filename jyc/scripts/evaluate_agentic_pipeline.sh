@@ -15,6 +15,9 @@ export DASHBOARD_PORT=8299
 MODEL_PARAM=$1
 
 CONFIG_NAME="agent_val_multiandroid_grpo_evaluate"
+if [ "$MODEL_PARAM" = "voyager" ]; then
+    CONFIG_NAME="agent_val_multiandroid_grpo_evaluate_voyager"
+fi
 if [ "$MODEL_PARAM" = "guiowl" ]; then
     CONFIG_NAME="agent_val_multiandroid_grpo_evaluate_guiowl"
 fi
