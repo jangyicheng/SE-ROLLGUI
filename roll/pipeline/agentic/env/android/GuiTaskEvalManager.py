@@ -354,8 +354,8 @@ async def get_task():
 async def complete_task(req: CompleteTaskRequest):
     global initialized
     with lock:
-        if initialized: # 完成任务之后清除初始化状态
-            initialized = False 
+        # if initialized: # 完成任务之后清除初始化状态
+        #     initialized = False 
         if req.task not in task_stats:
             raise HTTPException(status_code=404, detail=f"Task {req.task} not found")
 

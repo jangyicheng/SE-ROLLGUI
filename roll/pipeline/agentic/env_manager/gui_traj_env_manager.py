@@ -25,6 +25,7 @@ from roll.utils.constants import EpisodeStopReason, GenerateStopReason
 from roll.utils.functionals import pad_to_length, aggregate_metrics
 from roll.utils.logging import get_logger
 from roll.utils.str_utils import contains_renderable_field
+from roll.datasets.global_trajectory_cache import GlobalTrajectoryCacheManager,GlobalTrajectoryCache
 
 logger = get_logger()
 
@@ -91,6 +92,48 @@ class GuiTrajEnvManager(BaseEnvManager):
         )
         self.last_reset_failed = False
         self.last_reset_failure_info = None
+        self.manager = None
+        self.cache = None
+        
+        
+    @property
+    def task(self):
+        return self.env.task
+    
+    def save_trajectory(self, rollout: RolloutCache):
+        """
+        保存当前 rollout 到对应 task 的最佳轨迹缓存中。
+        只在训练模式下执行，且只保留 step 数最少但 score > 0.5 的轨迹（原逻辑）。
+        """
+        # 验证模式不保存轨迹
+        if self.mode == "val":
+            return
+                
+        if not self.cache:
+            try:
+                self.cache = ray.get_actor("global_traj_cache", namespace="roll")
+            except ValueError:
+                self.cache = GlobalTrajectoryCache.options(
+                    name="global_traj_cache",
+                    namespace="roll",
+                    get_if_exists=True
+                ).remote() 
+        
+        task = self.task["name"]
+        
+        try:         
+            best_traj = self.cache.get_best_trajectory.remote(task)
+            # 初始化该 task 的缓存（如果还没有）
+            if not best_traj:
+                self.cache.save_trajectory.remote(task, rollout, mode=self.mode)
+            else:
+                # 与该 task 已有最佳轨迹比较,保留 step 更少的轨迹（假设步数少代表更高效）
+                if rollout.step < best_traj.step:
+                    self.cache.save_trajectory.remote(task, rollout, mode=self.mode)
+
+        except Exception as e:
+            logger.info(f"save_trajectory error for task {task}: {e}")
+       
         
     def run_rollout_loop(self, data: DataProto):
         """
@@ -155,12 +198,13 @@ class GuiTrajEnvManager(BaseEnvManager):
                 else:
                     rollout: DataProto = self.formulate_rollouts(rollout_cache)
                     # traj_group_id = f"{self.rollout_cache.tag}_{self.rollout_cache.group_id}_{self.episode_id}_{self.group_seed}"
-                    traj_group_id = f"{self.rollout_cache.tag}_{self.rollout_cache.group_id}_{self.episode_id}"
-                    traj_id = f"{traj_group_id}_{self.rollout_cache.env_id}"
-                    rollout.non_tensor_batch["traj_group_id"] = np.array([traj_group_id] * rollout.batch.batch_size[0], dtype=object)
-                    rollout.non_tensor_batch["traj_id"] = np.array([traj_id] * rollout.batch.batch_size[0], dtype=object)
-                    # 使用动态分配的 group_id 提交
-                    ray.get(self.output_queue.put.remote(self.current_group_id, self.episode_id, start_step, rollout))
+                    if rollout:
+                        traj_group_id = f"{self.rollout_cache.tag}_{self.rollout_cache.group_id}_{self.episode_id}"
+                        traj_id = f"{traj_group_id}_{self.rollout_cache.env_id}"
+                        rollout.non_tensor_batch["traj_group_id"] = np.array([traj_group_id] * rollout.batch.batch_size[0], dtype=object)
+                        rollout.non_tensor_batch["traj_id"] = np.array([traj_id] * rollout.batch.batch_size[0], dtype=object)
+                        # 使用动态分配的 group_id 提交
+                        ray.get(self.output_queue.put.remote(self.current_group_id, self.episode_id, start_step, rollout))
 
                 rollout_cache = self.reset()
                 start_step = self.current_step
@@ -175,6 +219,7 @@ class GuiTrajEnvManager(BaseEnvManager):
         # 退出信号：使用最后分配的 group_id（如果有的话）
         exit_group_id = self.current_group_id if self.current_group_id is not None else 0
         ray.get(self.output_queue.put.remote(exit_group_id, self.episode_id, start_step, None))
+        
         
     def reset(self) -> RolloutCache:
         # 向 GroupQueueManager 请求任务分配（不再传入固定 group_id）
@@ -260,10 +305,10 @@ class GuiTrajEnvManager(BaseEnvManager):
         if suffix is not None:
             self.rollout_cache.history[-1]["suffix"] = suffix
 
-        if self.mode == "val" and self.pipeline_config.render_save_dir and hasattr(self.env, "render"):
-            frame = self.env.render(mode='rgb_array')
-            if isinstance(frame, np.ndarray):
-                self.rollout_cache.frames.append(frame)
+        # if self.mode == "val" and self.pipeline_config.render_save_dir and hasattr(self.env, "render"):
+        #     frame = self.env.render(mode='rgb_array')
+        #     if isinstance(frame, np.ndarray):
+        #         self.rollout_cache.frames.append(frame)
 
         return self.rollout_cache
 

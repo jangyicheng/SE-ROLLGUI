@@ -51,41 +51,16 @@ class EnvironmentWorker(Worker):
         self._monitor_stop = threading.Event()
         self._monitor_interval_sec = float(os.environ.get("ROLLOUT_CACHE_MONITOR_INTERVAL", "30"))
         self._group_snapshot_every_n = max(1, int(os.environ.get("ROLLOUT_CACHE_GROUP_SNAPSHOT_EVERY_N", "1")))
+        self._obj_probe_every_n = max(1, int(os.environ.get("ROLLOUT_OBJ_PROBE_EVERY_N", "2")))
         self._monitor_tick = 0
         self._prev_rss_mb = None
         self._prev_cache_mb = None
         self._cache_logger = logger
 
-    @staticmethod
-    def _get_process_rss_mb() -> float:
-        try:
-            with open("/proc/self/status", "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.startswith("VmRSS:"):
-                        parts = line.split()
-                        return float(parts[1]) / 1024.0
-        except Exception:
-            pass
-        return 0.0
-
-    def _collect_group_queue_memory_snapshot(self):
-        if self.output_queue is None:
-            return {}
-
-        try:
-            import ray
-
-            if not hasattr(self.output_queue, "get_memory_snapshot"):
-                return {}
-
-            return ray.get(self.output_queue.get_memory_snapshot.remote())
-        except Exception as e:
-            self._cache_logger.debug("group queue memory snapshot failed: %s", e)
-            return {}
 
     def _log_object_distribution_probe(self):
         # 低频采样，避免对主流程造成可见影响
-        if self._monitor_tick % 2 != 0:
+        if self._monitor_tick % self._obj_probe_every_n != 0:
             return
 
         try:
@@ -175,6 +150,33 @@ class EnvironmentWorker(Worker):
         except Exception as e:
             self._cache_logger.debug("object distribution probe failed: %s", e)
 
+    @staticmethod
+    def _get_process_rss_mb() -> float:
+        try:
+            with open("/proc/self/status", "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        parts = line.split()
+                        return float(parts[1]) / 1024.0
+        except Exception:
+            pass
+        return 0.0
+
+    def _collect_group_queue_memory_snapshot(self):
+        if self.output_queue is None:
+            return {}
+
+        try:
+            import ray
+
+            if not hasattr(self.output_queue, "get_memory_snapshot"):
+                return {}
+
+            return ray.get(self.output_queue.get_memory_snapshot.remote())
+        except Exception as e:
+            self._cache_logger.debug("group queue memory snapshot failed: %s", e)
+            return {}
+
     def _monitor_rollout_cache_loop(self):
         while not self._monitor_stop.is_set():
             try:
@@ -193,9 +195,11 @@ class EnvironmentWorker(Worker):
                 self._monitor_tick += 1
 
                 detail = gui_stats.get("memory/gui/top_envs", "")
+                non_tensor_top = gui_stats.get("memory/gui/cache_non_tensor_top_keys", "")
 
                 self._cache_logger.info(
                     "worker_rank=%s rss_mb=%.2f delta_rss_mb=%.2f rollout_cache_mb=%.2f delta_cache_mb=%.2f "
+                    "obs_mb=%.2f msg_img_mb=%.2f msg_txt_mb=%.2f non_tensor_mb=%.2f frames_mb=%.2f non_tensor_top=%s "
                     "gui_envs=%s active_envs=%s gui_history=%s gui_frames=%s group_queues=%s "
                     "pending_groups=%s buffered_rollouts=%s group_payload_mb=%.2f %s",
                     self.rank,
@@ -203,6 +207,12 @@ class EnvironmentWorker(Worker):
                     delta_rss,
                     cache_mb,
                     delta_cache,
+                    float(gui_stats.get("memory/gui/cache_observation_mb", 0.0)),
+                    float(gui_stats.get("memory/gui/cache_messages_image_mb", 0.0)),
+                    float(gui_stats.get("memory/gui/cache_messages_text_mb", 0.0)),
+                    float(gui_stats.get("memory/gui/cache_non_tensor_mb", 0.0)),
+                    float(gui_stats.get("memory/gui/cache_frames_mb", 0.0)),
+                    non_tensor_top,
                     gui_stats.get("memory/gui/env_count", 0),
                     gui_stats.get("memory/gui/active_envs", 0),
                     gui_stats.get("memory/gui/history_total", 0),
@@ -213,7 +223,8 @@ class EnvironmentWorker(Worker):
                     float(group_stats.get("memory/group_queue/rollout_payload_estimated_mb", 0.0)),
                     detail,
                 )
-                # self._log_object_distribution_probe()
+                # if os.environ.get("ROLLOUT_OBJ_PROBE_ENABLE", "0") == "1":
+                #     self._log_object_distribution_probe()
             except Exception as e:
                 self._cache_logger.warning("rollout cache monitor error: %s", e)
 

@@ -7,11 +7,10 @@ import time
 from roll.utils.logging import get_logger
 from pathlib import Path
 import json
-from typing import Any, Dict
 from io import BytesIO
 from PIL import Image
-from datetime import datetime
 from .tasks import MOBILEWORLD_TASK_LIST
+from .task_manager_utils import TaskManagerUtilsMixin
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import functools
 
@@ -34,7 +33,7 @@ def log_time_on_error(func):
 
 
 
-class RemoteMobileEnv(Env):
+class RemoteMobileEnv(TaskManagerUtilsMixin, Env):
     def __init__(
         self,
         adb_path: str = "/root/android-sdk/platform-tools/adb",
@@ -42,7 +41,7 @@ class RemoteMobileEnv(Env):
         grpc_ports: list[int] | str = [],
         task: str | None = None,
         task_family: str = "mobile_world",
-        max_steps: int = 10,
+        max_steps: int = 60,
         group_seed: int = 0,
         max_image_tokens: int = 600,
         envs_num: int | None = None,
@@ -72,11 +71,12 @@ class RemoteMobileEnv(Env):
         self.grpc_port = self.grpc_ports[self.env_id % len(self.grpc_ports)]
 
         self.max_steps = max_steps
+        self.max_steps_forall = max_steps
         self.task_family = task_family
         self.adb_path = adb_path
         self.max_image_tokens = max_image_tokens
         self.assigned_task = None
-
+        self.scheduler_mode = self.mode
 
         legacy_task_manager_url = kwargs.get("task_manager_url", None)
         self.task_manager_train_url = kwargs.get(
@@ -138,100 +138,6 @@ class RemoteMobileEnv(Env):
         if data.get("observation") is None:
             return True
         return False
-    def _return_task_once(self, reason: str, rollback_total_attempts: bool = True):
-        if self.assigned_task is None or self._task_returned_for_current_episode:
-            return
-        try:
-            payload = {
-                "task": self.assigned_task,
-                "reason": reason,
-                "rollback_total_attempts": rollback_total_attempts,
-            }
-            requests.post(f"{self.task_manager_url}/return_task", json=payload, timeout=20)
-        except Exception as e:
-            logger.warning(f"return_task failed: {e}")
-        finally:
-            self._task_returned_for_current_episode = True
-            
-
-    def _http_get_json(self, url: str, timeout: int = 20) -> Dict[str, Any]:
-        resp = requests.get(url, timeout=timeout)
-        resp.raise_for_status()
-        return resp.json()
-
-    def _http_post_json(self, url: str, payload: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
-        resp = requests.post(url, json=payload, timeout=timeout)
-        resp.raise_for_status()
-        return resp.json()
-
-    def _resolve_active_manager(self) -> str:
-        return self.task_manager_train_url if self.scheduler_mode == "train" else self.task_manager_eval_url
-
-    def _resolve_peer_manager(self) -> str:
-        return self.task_manager_eval_url if self.scheduler_mode == "train" else self.task_manager_train_url
-
-    def _sync_timestamp_only(self, shared_timestamp: str | None) -> str:
-        """
-        只做 timestamp 协调，不初始化对端 manager。
-        优先级:
-        1) 显式 shared_timestamp
-        2) 任一已初始化 manager 的 timestamp
-        3) 新生成 timestamp
-        """
-        if shared_timestamp:
-            return shared_timestamp
-
-        active_url = self._resolve_active_manager()
-        peer_url = self._resolve_peer_manager()
-
-        ts_candidates = []
-        for url in (active_url, peer_url):
-            try:
-                info = self._http_get_json(f"{url}/info")
-                if info.get("initialized") and info.get("timestamp"):
-                    ts_candidates.append(info["timestamp"])
-            except Exception:
-                pass
-
-        ts_candidates = list(dict.fromkeys(ts_candidates))
-        if len(ts_candidates) > 1:
-            raise RuntimeError(f"manager timestamp conflict: {ts_candidates}")
-        if len(ts_candidates) == 1:
-            return ts_candidates[0]
-        return datetime.now().strftime("%Y-%m-%d_%H%M%S")
-
-    def _initialize_active_task_manager(
-        self,
-        task_list: list[str],
-        group_size: int,
-        n_task: int,
-        seed: int,
-        shared_timestamp: str | None,
-    ) -> str:
-        active_url = self._resolve_active_manager()
-        final_timestamp = self._sync_timestamp_only(shared_timestamp)
-
-        payload = {
-            "task_list": task_list,
-            "group_size": group_size,
-            "n_task": n_task,
-            "seed": seed,
-            "timestamp": final_timestamp,
-            "mode": self.scheduler_mode,
-        }
-
-        try:
-            self._http_post_json(f"{active_url}/initialize", payload)
-            info = self._http_get_json(f"{active_url}/info")
-        except:
-            return final_timestamp
-
-        if info.get("timestamp") != final_timestamp:
-            raise RuntimeError(
-                f"active manager timestamp mismatch: expect={final_timestamp}, got={info.get('timestamp')}"
-            )
-        return final_timestamp
-    
     def _normalize_target_task(self, target_task):
         if not isinstance(target_task, dict):
             return target_task
@@ -241,21 +147,6 @@ class RemoteMobileEnv(Env):
             if value is not None:
                 return value
         return target_task
-
-    def _return_task_once(self, reason: str, rollback_total_attempts: bool = True):
-        if self.assigned_task is None or self._task_returned_for_current_episode:
-            return
-        try:
-            payload = {
-                "task": self.assigned_task,
-                "reason": reason,
-                "rollback_total_attempts": rollback_total_attempts,
-            }
-            requests.post(f"{self.task_manager_url}/return_task", json=payload, timeout=20)
-        except Exception as e:
-            logger.warning(f"return_task failed: {e}")
-        finally:
-            self._task_returned_for_current_episode = True
 
     def _try_recover(self):
         try:
@@ -306,11 +197,13 @@ class RemoteMobileEnv(Env):
         payload = {
             "console_port": self.console_port,
             "grpc_port": self.grpc_port,
-            "max_steps": self.max_steps,
+            "max_steps": self.max_steps_forall,
             "adb_path": adb_path,
             "max_image_tokens": max_image_tokens,
+            "step_wait_time": 5,
         }
         resp = self.call_init(payload)
+        # print(f"payload: {payload}")
         if resp.status_code != 200:
             raise RuntimeError(f"Server init failed: {resp.text}")
 
@@ -395,7 +288,7 @@ class RemoteMobileEnv(Env):
         observation = data.get("observation")
         self.current_obs = self._decode_obs(observation)
         self.task = data.get("task", {})
-        self.max_steps = self.task.get("max_steps", self.max_steps)
+        # self.max_steps = self.task.get("max_steps", self.max_steps)
 
         task_name = self.task.get("name", "unknown_task")
         timestamp = time.strftime("%Y%m%d_%H%M")

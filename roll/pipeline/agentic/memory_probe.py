@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping
+import sys
+from typing import Any, Dict, List, Mapping, Tuple
 
 
 def _size_in_bytes(value: Any) -> int:
@@ -17,11 +18,23 @@ def _size_in_bytes(value: Any) -> int:
     if isinstance(value, str):
         return len(value.encode("utf-8", errors="ignore"))
 
-    if isinstance(value, list):
+    if isinstance(value, Mapping):
+        total = 0
+        for idx, (_, item) in enumerate(value.items()):
+            if idx >= 16:
+                break
+            total += _size_in_bytes(item)
+        return total
+
+    if isinstance(value, (list, tuple)):
         if not value:
             return 0
         if isinstance(value[0], (int, float, bool)):
             return len(value) * 8
+        total = 0
+        for item in value[:16]:
+            total += _size_in_bytes(item)
+        return total
 
     element_size = getattr(value, "element_size", None)
     numel = getattr(value, "numel", None)
@@ -31,21 +44,25 @@ def _size_in_bytes(value: Any) -> int:
         except Exception:
             return 0
 
-    return 0
-
-
-def _estimate_messages_chars(messages: Any) -> int:
-    if not isinstance(messages, list):
+    try:
+        return int(sys.getsizeof(value))
+    except Exception:
         return 0
 
-    total = 0
+
+def _estimate_messages_bytes(messages: Any) -> Dict[str, int]:
+    if not isinstance(messages, list):
+        return {"text_bytes": 0, "image_bytes": 0, "total_bytes": 0}
+
+    text_bytes = 0
+    image_bytes = 0
     for message in messages[:8]:
         if not isinstance(message, Mapping):
             continue
 
         content = message.get("content")
         if isinstance(content, str):
-            total += len(content)
+            text_bytes += len(content.encode("utf-8", errors="ignore"))
             continue
 
         if isinstance(content, list):
@@ -54,9 +71,33 @@ def _estimate_messages_chars(messages: Any) -> int:
                     continue
                 text = item.get("text")
                 if isinstance(text, str):
-                    total += len(text)
+                    text_bytes += len(text.encode("utf-8", errors="ignore"))
+                image = item.get("image")
+                if isinstance(image, str):
+                    image_bytes += len(image.encode("utf-8", errors="ignore"))
 
-    return total
+    return {
+        "text_bytes": text_bytes,
+        "image_bytes": image_bytes,
+        "total_bytes": text_bytes + image_bytes,
+    }
+
+
+def _estimate_non_tensor_batch(non_tensor_batch: Any) -> Tuple[int, List[Tuple[str, int]]]:
+    if not isinstance(non_tensor_batch, Mapping):
+        return 0, []
+
+    total = 0
+    details: List[Tuple[str, int]] = []
+    for idx, (key, value) in enumerate(non_tensor_batch.items()):
+        if idx >= 32:
+            break
+        size = _size_in_bytes(value)
+        total += size
+        details.append((str(key), size))
+
+    details.sort(key=lambda x: x[1], reverse=True)
+    return total, details[:8]
 
 
 def collect_gui_traj_memory_snapshot(env_managers: Mapping[int, Any], max_env_details: int = 8) -> Dict[str, Any]:
@@ -66,9 +107,12 @@ def collect_gui_traj_memory_snapshot(env_managers: Mapping[int, Any], max_env_de
     frames_total = 0
 
     observation_bytes_total = 0
+    messages_text_bytes_total = 0
+    messages_image_bytes_total = 0
     messages_bytes_total = 0
     non_tensor_bytes_total = 0
     frames_bytes_total = 0
+    non_tensor_key_bytes_total: Dict[str, int] = {}
 
     env_details = []
 
@@ -95,27 +139,33 @@ def collect_gui_traj_memory_snapshot(env_managers: Mapping[int, Any], max_env_de
             active_envs += 1
 
         observation_sample = 0
-        messages_sample = 0
+        messages_text_sample = 0
+        messages_image_sample = 0
         non_tensor_sample = 0
 
         if history and isinstance(history[-1], Mapping):
             last_item = history[-1]
             observation_sample = _size_in_bytes(last_item.get("observation"))
-            messages_sample = _estimate_messages_chars(last_item.get("messages"))
+            messages_est = _estimate_messages_bytes(last_item.get("messages"))
+            messages_text_sample = messages_est["text_bytes"]
+            messages_image_sample = messages_est["image_bytes"]
 
-            non_tensor_batch = last_item.get("non_tensor_batch")
-            if isinstance(non_tensor_batch, Mapping):
-                for value in list(non_tensor_batch.values())[:8]:
-                    non_tensor_sample += _size_in_bytes(value)
+            non_tensor_sample, top_keys = _estimate_non_tensor_batch(last_item.get("non_tensor_batch"))
+            for key, key_bytes in top_keys:
+                non_tensor_key_bytes_total[key] = non_tensor_key_bytes_total.get(key, 0) + key_bytes * history_len
 
         frames_sample = _size_in_bytes(frames[-1]) if frames_len > 0 else 0
 
         observation_bytes = observation_sample * history_len
-        messages_bytes = messages_sample * history_len
+        messages_text_bytes = messages_text_sample * history_len
+        messages_image_bytes = messages_image_sample * history_len
+        messages_bytes = messages_text_bytes + messages_image_bytes
         non_tensor_bytes = non_tensor_sample * history_len
         frame_bytes = frames_sample * frames_len
 
         observation_bytes_total += observation_bytes
+        messages_text_bytes_total += messages_text_bytes
+        messages_image_bytes_total += messages_image_bytes
         messages_bytes_total += messages_bytes
         non_tensor_bytes_total += non_tensor_bytes
         frames_bytes_total += frame_bytes
@@ -124,7 +174,14 @@ def collect_gui_traj_memory_snapshot(env_managers: Mapping[int, Any], max_env_de
         env_details.append(
             (
                 env_total_bytes,
-                f"env={env_id},cache_mb={env_total_bytes / (1024 * 1024):.2f},history={history_len},frames={frames_len}",
+                "env="
+                f"{env_id},cache_mb={env_total_bytes / (1024 * 1024):.2f},"
+                f"obs_mb={observation_bytes / (1024 * 1024):.2f},"
+                f"msg_img_mb={messages_image_bytes / (1024 * 1024):.2f},"
+                f"msg_txt_mb={messages_text_bytes / (1024 * 1024):.2f},"
+                f"non_tensor_mb={non_tensor_bytes / (1024 * 1024):.2f},"
+                f"frames_mb={frame_bytes / (1024 * 1024):.2f},"
+                f"history={history_len},frames={frames_len}",
             )
         )
 
@@ -134,6 +191,8 @@ def collect_gui_traj_memory_snapshot(env_managers: Mapping[int, Any], max_env_de
         detail_lines.append(f"...(+{len(env_details) - max_env_details} envs)")
 
     cache_total_bytes = observation_bytes_total + messages_bytes_total + non_tensor_bytes_total + frames_bytes_total
+    top_non_tensor = sorted(non_tensor_key_bytes_total.items(), key=lambda x: x[1], reverse=True)[:8]
+    top_non_tensor_str = " | ".join([f"{k}:{v / (1024 * 1024):.2f}MB" for k, v in top_non_tensor])
 
     return {
         "memory/gui/env_count": gui_env_count,
@@ -141,10 +200,13 @@ def collect_gui_traj_memory_snapshot(env_managers: Mapping[int, Any], max_env_de
         "memory/gui/history_total": history_total,
         "memory/gui/frames_total": frames_total,
         "memory/gui/cache_observation_mb": observation_bytes_total / (1024 * 1024),
+        "memory/gui/cache_messages_text_mb": messages_text_bytes_total / (1024 * 1024),
+        "memory/gui/cache_messages_image_mb": messages_image_bytes_total / (1024 * 1024),
         "memory/gui/cache_messages_mb": messages_bytes_total / (1024 * 1024),
         "memory/gui/cache_non_tensor_mb": non_tensor_bytes_total / (1024 * 1024),
         "memory/gui/cache_frames_mb": frames_bytes_total / (1024 * 1024),
         "memory/gui/cache_estimated_mb": cache_total_bytes / (1024 * 1024),
+        "memory/gui/cache_non_tensor_top_keys": top_non_tensor_str,
         "memory/gui/top_envs": " | ".join(detail_lines),
     }
 

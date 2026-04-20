@@ -91,7 +91,7 @@ actor_infer:
   model_args:
     flash_attn: fa2
     disable_gradient_checkpointing: true
-    dtype: bf16 # fp32 # 
+    dtype: fp16 #fp32
   generating_args:
     max_new_tokens: 512 # single-turn response length
     top_p: 1.0

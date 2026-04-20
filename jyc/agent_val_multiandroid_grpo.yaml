@@ -21,17 +21,17 @@ system_envs:
   USE_MODELSCOPE: '1'
   # ROLL_LOG_LEVEL: "DEBUG"
 
-track_with: swanlab
-tracker_kwargs:
-  api_key: 4FsBwIEyUhCvOwlPJyr7g
-  project: GUIAgent-Online-RL
-  name: ${exp_name}
-  tags: 
-    - online_rl
-    - grpo
-  group: training
-  description: GUI online RL
-  log_dir: roll_exp/android
+# track_with: swanlab
+# tracker_kwargs:
+#   api_key: 4FsBwIEyUhCvOwlPJyr7g
+#   project: GUIAgent-Online-RL
+#   name: ${exp_name}
+#   tags: 
+#     - online_rl
+#     - grpo
+#   group: training
+#   description: GUI online RL
+#   log_dir: roll_exp/android
 
 
 # ----------------------------------------------
@@ -49,9 +49,9 @@ checkpoint_config:
 
 # 批处理大小与序列长度配置
 rollout_batch_size: 16 # the rollout trajectory size，也就是一批任务的数量
-val_batch_size: 20 # 2个task，每个task 10次运行
+val_batch_size: 40 # 2个task，每个task 10次运行
 sequence_length: 2048
-async_generation_ratio: 4
+# async_generation_ratio: 0
 # prompt_length
 # response_length
 
@@ -135,13 +135,13 @@ actor_infer:
   strategy_args:
     strategy_name: vllm
     strategy_config:
-      gpu_memory_utilization: 0.2
+      gpu_memory_utilization: 0.4
       block_size: 16
       load_format: auto
       max_model_len: 2048
   num_gpus_per_worker: 1  
-  device_mapping: list(range(1,2))
-  infer_batch_size: 1
+  device_mapping: list(range(0,2))
+  infer_batch_size: 4
 
 
 reference:
@@ -251,7 +251,7 @@ custom_envs:
       task_family: android_world
       max_image_tokens: 600
       group_size: ${val_env_manager.group_size}
-      n_task: 10
+      n_task: 20
       mode: val
       env_configs:
         - service_url: ${android_servers.server1.service_url}

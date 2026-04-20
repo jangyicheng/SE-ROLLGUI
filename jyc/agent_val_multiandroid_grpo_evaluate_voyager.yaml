@@ -91,9 +91,9 @@ actor_infer:
   model_args:
     flash_attn: fa2
     disable_gradient_checkpointing: true
-    dtype: bf16 # fp32 # 
+    dtype: fp16
   generating_args:
-    max_new_tokens: 512 # single-turn response length
+    max_new_tokens: 512
     top_p: 1.0
     top_k: 40
     num_beams: 1
@@ -104,12 +104,12 @@ actor_infer:
   strategy_args:
     strategy_name: vllm
     strategy_config:
-      gpu_memory_utilization: 0.8
+      gpu_memory_utilization: 0.9
       block_size: 16
       load_format: auto
-      max_model_len: 32768
+      max_model_len: 8192
   device_mapping: list(range(0,1))
-  infer_batch_size: 1
+  infer_batch_size: 8
 
 
 reward_normalization:
@@ -202,6 +202,7 @@ custom_envs:
       max_image_tokens: 600
       group_size: ${val_env_manager.group_size}
       n_task: ${max_steps}
+      max_steps: ${max_actions_per_traj}
       mode: val
       env_configs:
         - service_url: ${android_servers.server1.service_url}

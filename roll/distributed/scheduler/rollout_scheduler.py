@@ -363,13 +363,13 @@ class GroupQueueManager:
             q.shutdown()
         self.progress.set()
         
-    # def get_memory_snapshot(self):
-    #     try:
-    #         from roll.pipeline.agentic.memory_probe import collect_group_queue_memory_snapshot
-    #         return collect_group_queue_memory_snapshot(self)
-    #     except Exception as e:
-    #         logger.debug("group queue memory snapshot failed: %s", e)
-    #         return {}
+    def get_memory_snapshot(self):
+        try:
+            from roll.pipeline.agentic.memory_probe import collect_group_queue_memory_snapshot
+            return collect_group_queue_memory_snapshot(self)
+        except Exception as e:
+            logger.debug("group queue memory snapshot failed: %s", e)
+            return {}
 
     def put(self, group_id, episode_id, start_step, rollout: DataProto):
         assert group_id in self.group_queues
@@ -382,31 +382,31 @@ class GroupQueueManager:
             return
 
         # 仅在评测模式下瘦身 rollout：保留评测必需字段，去掉 prompt/轨迹等大字段
-        if rollout:
-            if self.mode in ("val"):
-                keep_batch_keys = [k for k in ("scores",) if k in rollout.batch.keys()]
-                keep_non_tensor_batch_keys = [
-                k for k in (
-                    "episode_scores",
-                    "step_scores",
-                    "tags",
-                    "env_ids",
-                    "group_ids",
-                    "traj_group_id",
-                    "traj_id",
-                    "traj_rollout_time",
-                    "traj_env_time",
-                )
-                if k in rollout.non_tensor_batch
-            ]
-                keep_meta_info_keys = [k for k in ("metrics", "task") if k in rollout.meta_info]
+        # if rollout:
+        #     if self.mode in ("val"):
+        #         keep_batch_keys = [k for k in ("scores",) if k in rollout.batch.keys()]
+        #         keep_non_tensor_batch_keys = [
+        #         k for k in (
+        #             "episode_scores",
+        #             "step_scores",
+        #             "tags",
+        #             "env_ids",
+        #             "group_ids",
+        #             "traj_group_id",
+        #             "traj_id",
+        #             "traj_rollout_time",
+        #             "traj_env_time",
+        #         )
+        #         if k in rollout.non_tensor_batch
+        #     ]
+        #         keep_meta_info_keys = [k for k in ("metrics", "task") if k in rollout.meta_info]
 
-                rollout = rollout.select(
-                    batch_keys=keep_batch_keys,
-                    non_tensor_batch_keys=keep_non_tensor_batch_keys,
-                    meta_info_keys=keep_meta_info_keys,
-                    deepcopy=False,
-                )
+        #         rollout = rollout.select(
+        #             batch_keys=keep_batch_keys,
+        #             non_tensor_batch_keys=keep_non_tensor_batch_keys,
+        #             meta_info_keys=keep_meta_info_keys,
+        #             deepcopy=False,
+        #         )
         self.group_queues[group_id].put(episode_id, start_step, rollout)
 
     async def get_batch(self, batch_size, current_step) -> List[DataProto]:
@@ -428,9 +428,7 @@ class GroupQueueManager:
                 asyncio.create_task(q.get(), name=str(gid))
                 for gid, q in self.group_queues.items()
             }
-            
             # assert self.group_queues, "No group queues available"
-
             if not tasks:
                 print("no group queues available, returning empty batch")
                 break
@@ -543,14 +541,14 @@ class RolloutScheduler:
         )
 
         self.rollout_task = None
-        try:
-            self.manager = ray.get_actor("global_traj_manager", namespace="roll")  # 明确指定 namespace 更安全
-        except ValueError:
-            self.manager = GlobalTrajectoryCacheManager.options(
-                name="global_traj_manager",
-                namespace="roll",          
-                get_if_exists=True        
-            ).remote()
+        # try:
+        #     self.manager = ray.get_actor("global_traj_manager", namespace="roll")  # 明确指定 namespace 更安全
+        # except ValueError:
+        #     self.manager = GlobalTrajectoryCacheManager.options(
+        #         name="global_traj_manager",
+        #         namespace="roll",          
+        #         get_if_exists=True        
+        #     ).remote()
 
         try:
             self.cache = ray.get_actor("global_traj_cache", namespace="roll")

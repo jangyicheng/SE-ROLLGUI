@@ -51,7 +51,7 @@ actor_infer:
   model_args:
     flash_attn: fa2
     disable_gradient_checkpointing: true
-    dtype: bf16
+    dtype: fp16
   generating_args:
     max_new_tokens: 512
     top_p: 1.0
@@ -64,12 +64,12 @@ actor_infer:
   strategy_args:
     strategy_name: vllm
     strategy_config:
-      gpu_memory_utilization: 0.8
+      gpu_memory_utilization: 0.9
       block_size: 16
       load_format: auto
-      max_model_len: 32768
+      max_model_len: 8192
   device_mapping: list(range(0,1))
-  infer_batch_size: 1
+  infer_batch_size: 8
 
 reward_normalization:
   grouping: traj_group_id
@@ -128,6 +128,7 @@ mobileworld: &mobileworld
     group_size: 1
     n_task: ${max_steps}
     mode: "val"
+    max_steps: ${max_actions_per_traj}
     success_threshold: 0.99
     env_configs:
       - service_url: ${android_servers.server1.service_url}

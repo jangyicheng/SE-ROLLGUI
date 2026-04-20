@@ -11,7 +11,7 @@ hydra:
   output_subdir: null
 
 # Qwen3.5-4B # Qwen3-VL-4B-Instruct #
-Model: Qwen3-VL-4B-Instruct #Qwen3-VL-8B-Instruct #GUI-Owl-1.5-8B-Instruct # Qwen3-VL-30B-A3B-Instruct # MAI-UI-8B # Qwen3-VL-8B-Thinking #
+Model: Qwen3-VL-8B-Instruct #Qwen3-VL-8B-Instruct #GUI-Owl-1.5-8B-Instruct # Qwen3-VL-30B-A3B-Instruct # MAI-UI-8B # Qwen3-VL-8B-Thinking #
 exp_name: ${Model}
 seed: 42
 logging_dir: ./output/logs
@@ -35,7 +35,7 @@ system_envs:
 # ----------------------------------------------
 
 # 训练/评估流程配置
-max_steps: 20  
+max_steps: 8
 save_steps: 1
 logging_steps: 1
 eval_steps: 1
@@ -46,8 +46,8 @@ checkpoint_config:
 
 
 # 批处理大小与序列长度配置
-rollout_batch_size:  12
-val_batch_size: 4 # the rollout trajectory size is 87
+rollout_batch_size:  30
+val_batch_size: 30 
 # prompt_length
 # response_length
 sequence_length: 11000
@@ -91,9 +91,9 @@ actor_infer:
   model_args:
     flash_attn: fa2
     disable_gradient_checkpointing: true
-    dtype: bf16 # fp32 # 
+    dtype: fp16
   generating_args:
-    max_new_tokens: 512 # single-turn response length
+    max_new_tokens: 512
     top_p: 1.0
     top_k: 40
     num_beams: 1
@@ -104,12 +104,12 @@ actor_infer:
   strategy_args:
     strategy_name: vllm
     strategy_config:
-      gpu_memory_utilization: 0.8
+      gpu_memory_utilization: 0.9
       block_size: 16
       load_format: auto
-      max_model_len: 32768
+      max_model_len: 8192
   device_mapping: list(range(0,1))
-  infer_batch_size: 1
+  infer_batch_size: 8
 
 
 reward_normalization:

@@ -339,6 +339,6 @@ MOBILEWORLD_TASK_LIST = [ # 117个任务
     "SuggestPaperTask",
     "SumFileLinesTask",
     "TextArrivalTimeTask",
-    "ThanksgivingPrepTask",
+    # "ThanksgivingPrepTask",
     "TakeSelfieTask",
 ]

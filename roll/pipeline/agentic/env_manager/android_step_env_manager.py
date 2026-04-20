@@ -30,7 +30,7 @@ from roll.utils.env_action_limiter import get_global_limiter
 from roll.utils.functionals import aggregate_metrics, pad_to_length
 from roll.utils.hash_utils import compute_object_hash
 from roll.utils.logging import get_logger
-
+from roll.datasets.global_trajectory_cache import GlobalTrajectoryCacheManager,GlobalTrajectoryCache
 
 logger = get_logger()
 
@@ -53,7 +53,7 @@ custom_system_prompt = """
 You can get information from skill memory every turn. It will provide general steps and useful tips to complete the task.
 """
 
-logger = get_logger()
+
 
 
 class AndroidStepEnvManager(GuiTrajEnvManager):
@@ -119,6 +119,7 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
         self.env_config["config"].update({
             "android_env_id": self.env_config["env_id"],
             "android_group_id": self.env_config["group_id"],
+            "max_steps": self.env_config.get("max_steps", 60),
         })
         self.rollout_data_type = self.env_config.get("rollout_data_type", "trajectory")
         with self.thread_lock, self.env_step_limiter:
@@ -149,7 +150,6 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
     @property
     def task(self):
         return self.env.task
-
 
     def make_decision(self, rollout_cache: RolloutCache):
         lm_input, messages = self.format_messages(rollout_cache)
@@ -190,6 +190,26 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
         return lm_output
 
     def format_messages(self, rollout_cache: RolloutCache) -> Tuple[DataProto, List[Dict]]:
+        
+         # 仅在 val 且开启 val_memory_compact 时，压缩历史旧步缓存，避免大对象累积
+        if self.mode == "val" and getattr(self, "val_memory_compact", True):
+            keep_keys = {
+                "llm_response",
+                "prompt_ids",
+                "response_ids",
+                "reward",
+                "state_hash",
+                "infer_logprobs",
+            }
+            history = rollout_cache.history if rollout_cache is not None else []
+            # 当前步（最后一项）仍需 observation 参与本轮构造，不做清理
+            for old_item in history[:-1]:
+                if not isinstance(old_item, dict):
+                    continue
+                compact_item = {k: old_item[k] for k in keep_keys if k in old_item}
+                old_item.clear()
+                old_item.update(compact_item)
+                
         def build_user_content(text: str, image: str, info: str | None = None) -> dict:
             if info is not None:
                 text = info + text
@@ -231,7 +251,6 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
                 else None,
             )
         )
-        # lm_input_texts = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
         lm_input_texts = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
  
         features = [
@@ -267,6 +286,7 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
         """
         Construct step-wise training samples from the collected trajectory.
         """
+        
         if "observation" in rollout_cache.history[-1]:
             rollout_cache.history.pop(-1)
         
@@ -320,7 +340,11 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
                     "step": np.array([step], dtype=object),
                 },
             )
-            lm_input.non_tensor_batch.update(history["non_tensor_batch"])
+
+            non_tensor_batch = history.get("non_tensor_batch")
+            if isinstance(non_tensor_batch, dict) and non_tensor_batch:
+                lm_input.non_tensor_batch.update(non_tensor_batch)
+                
             lm_input.meta_info.update({"task": self.task["name"]})
             
             
@@ -332,6 +356,19 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
                 lm_input.batch["infer_logprobs"] = infer_logprobs[:, 1:]
 
             samples.append(lm_input)
+            del (
+                input_ids, attention_mask, position_ids,
+                response_mask, prompt_mask, score_tensor,
+                infer_logprobs
+            )
+            
+                    
+            if step % 8 == 0 and step > 0:
+                import gc
+                gc.collect()        
+    
+            if self.mode == "val":
+                break  # val阶段跳过rollout构造
             
         # batch = lm_input 
         # self.logger.info("dataproto is invalid!")
@@ -351,14 +388,15 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
 
         env_metric = {f"env/{rollout_cache.tag}/{k}": v for k, v in env_metric.items()}
         batch.meta_info = {"metrics": env_metric}
+
+
         
         # 保存 DataProto 到全局轨迹缓存
-        try:
-            self.save_trajectory(rollout=batch)
-        except Exception as e:
-            self.logger.debug(f"save_trajectory failed: {e}")        
-
-
+        if episode_score > 0.5:  # 仅保存成功的轨迹
+            try:
+                self.save_trajectory(rollout=batch)
+            except Exception as e:
+                self.logger.debug(f"save_trajectory failed: {e}")        
 
         return batch
 
