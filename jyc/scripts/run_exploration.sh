@@ -30,15 +30,20 @@ export PYTHONPATH="$ROLL_PATH:$PYTHONPATH"
 # =============================================
 # 输出目录配置
 # =============================================
-EXPLORATION_OUTPUT_DIR="./exploration_output"
-INIT_OUTPUT_DIR="./init_output"
-
-NUM_EPISODES="${NUM_EPISODES:-20}"
-MAX_STEPS="${MAX_STEPS:-30}"
+EXPLORATION_OUTPUT_DIR="${EXPLORATION_OUTPUT_DIR:-./exploration_output}"
+INIT_OUTPUT_DIR="${INIT_OUTPUT_DIR:-./init_output}"
 
 # =============================================
 # 探索参数配置
 # =============================================
+NUM_EPISODES="${NUM_EPISODES:-5}"
+MAX_STEPS="${MAX_STEPS:-30}"
+
+# =============================================
+# MobileWorld 端口配置
+# =============================================
+CONSOLE_PORT="${CONSOLE_PORT:-5554}"
+GRPC_PORT="${GRPC_PORT:-8554}"
 
 # =============================================
 # VLM 模型后端配置
@@ -108,6 +113,8 @@ echo "  Model name:         $MODEL_NAME"
 echo "  vLLM base URL:      $VLLM_BASE_URL"
 echo "  Episodes:           $NUM_EPISODES"
 echo "  Max steps/ep:       $MAX_STEPS"
+echo "  Console port:       $CONSOLE_PORT"
+echo "  gRPC port:          $GRPC_PORT"
 echo "============================================="
 
 cd "$ROLL_PATH"
@@ -136,7 +143,9 @@ if [ "$MODEL_BACKEND" = "vllm" ]; then
         --model_max_tokens "$MODEL_MAX_TOKENS" \
         --output_dir "$EXPLORATION_OUTPUT_DIR" \
         --num_episodes "$NUM_EPISODES" \
-        --max_steps "$MAX_STEPS"
+        --max_steps "$MAX_STEPS" \
+        --console_port "$CONSOLE_PORT" \
+        --grpc_port "$GRPC_PORT"
 elif [ "$MODEL_BACKEND" = "openai" ]; then
     python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py \
         --env mobileworld \
@@ -147,7 +156,9 @@ elif [ "$MODEL_BACKEND" = "openai" ]; then
         --model_max_tokens "$MODEL_MAX_TOKENS" \
         --output_dir "$EXPLORATION_OUTPUT_DIR" \
         --num_episodes "$NUM_EPISODES" \
-        --max_steps "$MAX_STEPS"
+        --max_steps "$MAX_STEPS" \
+        --console_port "$CONSOLE_PORT" \
+        --grpc_port "$GRPC_PORT"
 else
     # none / 随机动作
     python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py \
@@ -156,7 +167,9 @@ else
         --model_backend none \
         --output_dir "$EXPLORATION_OUTPUT_DIR" \
         --num_episodes "$NUM_EPISODES" \
-        --max_steps "$MAX_STEPS"
+        --max_steps "$MAX_STEPS" \
+        --console_port "$CONSOLE_PORT" \
+        --grpc_port "$GRPC_PORT"
 fi
 
 EXPLORER_EXIT=$?

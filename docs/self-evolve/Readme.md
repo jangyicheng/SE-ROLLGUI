@@ -324,10 +324,10 @@ self_evolve_coordinator.on_round_end(
 ### 12.2 启动本地 vLLM 服务
 
 ```bash
-# 示例：启动 Qwen2.5-VL-7B-Instruct vLLM 服务
+# 示例：启动 GUI-Owl-1.5-8B-Instruct vLLM 服务
 python -m vllm.entrypoints.openai.api_server \
-    --model Qwen/Qwen2.5-VL-7B-Instruct \
-    --served-model-name Qwen2.5-VL-7B-Instruct \
+    --model Models/GUI-Owl-1.5-8B-Instruct \
+    --served-model-name GUI-Owl-1.5-8B-Instruct \
     --trust-remote-code \
     --dtype half \
     --port 8000 \
@@ -347,7 +347,7 @@ from roll.pipeline.agentic.env.android.exploration.model_client import VLMModelF
 # 方式一：直接指定后端
 model_client = VLMModelFactory.create(
     backend="vllm",
-    model_name="Qwen/Qwen2.5-VL-7B-Instruct",
+    model_name="Models/GUI-Owl-1.5-8B-Instruct",
     base_url="http://localhost:8000/v1",
     temperature=1.0,
     max_tokens=256,
@@ -356,7 +356,7 @@ model_client = VLMModelFactory.create(
 # 方式二：从 URL 自动推断后端
 model_client = VLMModelFactory.from_url(
     base_url="http://localhost:8000/v1",
-    model_name="Qwen/Qwen2.5-VL-7B-Instruct",
+    model_name="Models/GUI-Owl-1.5-8B-Instruct",
 )
 ```
 
@@ -366,30 +366,36 @@ model_client = VLMModelFactory.from_url(
 # vLLM 后端（本地）
 python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py \
     --env mobileworld \
-    --server_url http://localhost:9000 \
+    --server_url http://localhost:18000 \
     --model_backend vllm \
-    --model_name Qwen/Qwen2.5-VL-7B-Instruct \
+    --model_name Models/GUI-Owl-1.5-8B-Instruct \
     --vllm_base_url http://localhost:8000/v1 \
     --model_temperature 1.0 \
     --model_max_tokens 256 \
     --num_episodes 20 \
     --max_steps 30 \
+    --console_port 5554 \
+    --grpc_port 8554 \
     --output_dir ./exploration_output
 
 # OpenAI API 后端
 python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py \
     --env mobileworld \
-    --server_url http://localhost:9000 \
+    --server_url http://localhost:18000 \
     --model_backend openai \
     --model_name gpt-4o \
     --model_temperature 1.0 \
-    --num_episodes 20
+    --num_episodes 20 \
+    --console_port 5554 \
+    --grpc_port 8554
 
 # 随机动作（不使用模型）
 python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py \
     --env mobileworld \
-    --server_url http://localhost:9000 \
-    --model_backend none
+    --server_url http://localhost:18000 \
+    --model_backend none \
+    --console_port 5554 \
+    --grpc_port 8554
 ```
 
 #### Shell 脚本
@@ -397,7 +403,7 @@ python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py 
 ```bash
 # 默认使用 vLLM
 export MODEL_BACKEND=vllm
-export MODEL_NAME=Qwen/Qwen2.5-VL-7B-Instruct
+export MODEL_NAME=Models/GUI-Owl-1.5-8B-Instruct
 export VLLM_BASE_URL=http://localhost:8000/v1
 
 bash jyc/scripts/run_exploration.sh
@@ -454,7 +460,7 @@ python roll/pipeline/agentic/env/android/GuiTaskEvalManager.py \
 # 2. 启动 vLLM 模型服务（模型侧）
 #    在另一个终端运行：
 python -m vllm.entrypoints.openai.api_server \
-    --model Qwen/Qwen2.5-VL-7B-Instruct \
+    --model Models/GUI-Owl-1.5-8B-Instruct \
     --port 8000 \
     --trust-remote-code \
     --dtype half \
@@ -462,7 +468,7 @@ python -m vllm.entrypoints.openai.api_server \
 
 # 3. 运行探索阶段（使用 vLLM）
 export MODEL_BACKEND=vllm
-export MODEL_NAME=Qwen/Qwen2.5-VL-7B-Instruct
+export MODEL_NAME=Models/GUI-Owl-1.5-8B-Instruct
 export VLLM_BASE_URL=http://localhost:8000/v1
 export NUM_EPISODES=20
 bash jyc/scripts/run_exploration.sh

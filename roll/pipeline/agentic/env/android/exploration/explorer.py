@@ -473,7 +473,8 @@ class MobileWorldExplorer(BaseExplorer):
         exploration_id: Optional[str] = None,
         log_trajectory: bool = True,
         save_screenshots: bool = True,
-        device_id: str = "device_001",
+        console_port: int = 5554,
+        grpc_port: int = 8554,
         instruction: Optional[str] = None,
         snapshot: str = "default",
     ):
@@ -486,14 +487,13 @@ class MobileWorldExplorer(BaseExplorer):
             exploration_id=exploration_id,
             log_trajectory=log_trajectory,
             save_screenshots=save_screenshots,
-            console_port=None,
-            grpc_port=None,
+            console_port=console_port,
+            grpc_port=grpc_port,
             adb_path="",
             task_family="mobile_world",
             seed=42,
             instruction=instruction,
         )
-        self.device_id = device_id
         self.snapshot = snapshot
         self.current_obs: Optional[np.ndarray] = None
         self.current_screenshot_b64: Optional[str] = None
@@ -504,7 +504,8 @@ class MobileWorldExplorer(BaseExplorer):
 
     def _init_server(self) -> Dict[str, Any]:
         payload = {
-            "device_id": self.device_id,
+            "console_port": self.console_port,
+            "grpc_port": self.grpc_port,
             "snapshot": self.snapshot,
         }
         resp = requests.post(f"{self.server_url}/init", json=payload, timeout=self.TIMEOUT)
@@ -514,7 +515,8 @@ class MobileWorldExplorer(BaseExplorer):
 
     def _reset(self, go_home: bool = True) -> Dict[str, Any]:
         payload = {
-            "device_id": self.device_id,
+            "console_port": self.console_port,
+            "grpc_port": self.grpc_port,
             "snapshot": self.snapshot,
         }
         resp = requests.post(f"{self.server_url}/reset", json=payload, timeout=self.TIMEOUT)
@@ -524,7 +526,8 @@ class MobileWorldExplorer(BaseExplorer):
 
     def _step(self, action: Union[str, Dict]) -> Dict[str, Any]:
         payload = {
-            "device_id": self.device_id,
+            "console_port": self.console_port,
+            "grpc_port": self.grpc_port,
             "action": action,
         }
         resp = requests.post(f"{self.server_url}/step", json=payload, timeout=self.TIMEOUT)
@@ -535,7 +538,7 @@ class MobileWorldExplorer(BaseExplorer):
     def _get_screenshot(self) -> np.ndarray:
         if self.current_obs is not None:
             return self.current_obs
-        payload = {"device_id": self.device_id, "action": {"name": "wait"}}
+        payload = {"console_port": self.console_port, "grpc_port": self.grpc_port, "action": {"name": "wait"}}
         resp = requests.post(f"{self.server_url}/step", json=payload, timeout=self.TIMEOUT)
         if resp.status_code == 200:
             data = resp.json()

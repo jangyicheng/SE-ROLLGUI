@@ -4,19 +4,19 @@ CLI script for running AndroidWorld/MobileWorld environment exploration.
 Usage:
     # MobileWorld exploration with local vLLM model
     python run_exploration.py --env mobileworld \
-        --server_url http://localhost:9000 \
+        --server_url http://localhost:18000 \
         --model_backend vllm \
         --model_name Qwen2.5-VL-7B-Instruct \
         --vllm_base_url http://localhost:8000/v1
 
     # MobileWorld exploration with OpenAI API
     python run_exploration.py --env mobileworld \
-        --server_url http://localhost:9000 \
+        --server_url http://localhost:18000 \
         --model_backend openai \
         --model_name gpt-4o
 
     # Random exploration (no model)
-    python run_exploration.py --env mobileworld --server_url http://localhost:9000
+    python run_exploration.py --env mobileworld --server_url http://localhost:18000
 
     # Custom settings
     python run_exploration.py --max_steps 100 --output_dir ./my_exploration_output
@@ -119,14 +119,26 @@ def parse_args():
     parser.add_argument(
         "--device_id",
         type=str,
-        default="device_001",
-        help="Device ID (MobileWorld only)",
+        default=None,
+        help="Device ID (MobileWorld only, deprecated: use --console_port instead)",
+    )
+    parser.add_argument(
+        "--console_port",
+        type=int,
+        default=5554,
+        help="Android emulator console port (also used as device index for MobileWorld). Default: 5554",
+    )
+    parser.add_argument(
+        "--grpc_port",
+        type=int,
+        default=8554,
+        help="Android emulator gRPC port (also used as device index for MobileWorld). Default: 8554",
     )
     parser.add_argument(
         "--snapshot",
         type=str,
         default="default",
-        help="Snapshot name (MobileWorld only)",
+        help="Snapshot name. Default: default",
     )
     parser.add_argument(
         "--task_family",
@@ -266,18 +278,19 @@ def main():
             else:
                 ep_output_dir = args.output_dir
 
-            explorer = MobileWorldExplorer(
-                server_url=args.server_url,
-                model_client=model_client,
-                max_steps=args.max_steps,
-                output_dir=ep_output_dir,
-                exploration_id=ep_exploration_id,
-                log_trajectory=not args.no_log_trajectory,
-                save_screenshots=not args.no_save_screenshots,
-                device_id=args.device_id,
-                snapshot=args.snapshot,
-                instruction=args.instruction,
-            )
+        explorer = MobileWorldExplorer(
+            server_url=args.server_url,
+            model_client=model_client,
+            max_steps=args.max_steps,
+            output_dir=ep_output_dir,
+            exploration_id=ep_exploration_id,
+            log_trajectory=not args.no_log_trajectory,
+            save_screenshots=not args.no_save_screenshots,
+            console_port=args.console_port,
+            grpc_port=args.grpc_port,
+            snapshot=args.snapshot,
+            instruction=args.instruction,
+        )
 
         result = explorer.run()
         explorer.save_trajectory()

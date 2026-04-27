@@ -18,7 +18,7 @@ Usage:
     python run_task_init.py --num_instances 3 --output_dir ./init_output
 
     # MobileWorld initialization
-    python run_task_init.py --env mobileworld --server_url http://localhost:9000
+    python run_task_init.py --env mobileworld --server_url http://localhost:18000
 """
 
 import argparse
