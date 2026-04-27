@@ -21,17 +21,17 @@ system_envs:
   USE_MODELSCOPE: '1'
   # ROLL_LOG_LEVEL: "DEBUG"
 
-# track_with: swanlab
-# tracker_kwargs:
-#   api_key: 4FsBwIEyUhCvOwlPJyr7g
-#   project: GUIAgent-Online-RL
-#   name: ${exp_name}
-#   tags: 
-#     - online_rl
-#     - grpo
-#   group: training
-#   description: GUI online RL
-#   log_dir: roll_exp/android
+track_with: swanlab
+tracker_kwargs:
+  api_key: 4FsBwIEyUhCvOwlPJyr7g
+  project: GUIAgent-Online-RL
+  name: ${exp_name}
+  tags: 
+    - online_rl
+    - grpo
+  group: training
+  description: GUI online RL
+  log_dir: roll_exp/android
 
 
 # ----------------------------------------------
@@ -48,7 +48,7 @@ checkpoint_config:
 
 
 # 批处理大小与序列长度配置
-rollout_batch_size: 16 # the rollout trajectory size，也就是一批任务的数量
+rollout_batch_size: 32 # the rollout trajectory size，也就是一批任务的数量
 val_batch_size: 40 # 2个task，每个task 10次运行
 sequence_length: 2048
 # async_generation_ratio: 0
@@ -76,14 +76,15 @@ init_kl_coef:  0.001
 whiten_advantages: true
 entropy_loss_coef: 0
 max_grad_norm: 1.0
+use_kl_loss: true
 
 
 
 # 预定义一些模型参数
 pretrain: /HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/Models/${Model}
-lora_target: o_proj,q_proj,k_proj,v_proj
-lora_rank: 32
-lora_alpha: 32
+# lora_target: o_proj,q_proj,k_proj,v_proj
+# lora_rank: 32
+# lora_alpha: 32
 
 
 # 在 DeepSpeed 训练中，全局训练批次大小是per_device_train_batch_size * 
@@ -107,7 +108,7 @@ actor_train:
     weight_decay: 0
     per_device_train_batch_size: 4
     gradient_accumulation_steps: 16
-    warmup_steps: 0
+    warmup_steps: 4
     lr_scheduler_type: cosine
   data_args:
     template: native
@@ -128,14 +129,14 @@ actor_infer:
     top_p: 1.0
     top_k: 40
     num_beams: 1
-    temperature: 0.0
+    temperature: 1.0
     num_return_sequences: 1
   data_args:
     template: native
   strategy_args:
     strategy_name: vllm
     strategy_config:
-      gpu_memory_utilization: 0.4
+      gpu_memory_utilization: 0.6
       block_size: 16
       load_format: auto
       max_model_len: 2048
@@ -155,7 +156,7 @@ reference:
     strategy_name: hf_infer
     strategy_config: ~
   device_mapping: list(range(1,2))
-  infer_batch_size: 1  # micro_batch_size
+  infer_batch_size: 16  # micro_batch_size
 
 
 reward_normalization:
@@ -185,10 +186,10 @@ train_env_manager:
 
 val_env_manager:
   max_env_num_per_worker: 32
-  num_env_groups: 32
+  num_env_groups: 16
   group_size: 1 # should be set to 1 because val temperature is set to 0 and same prompt leads to same output
   tags: [AndroidEnv-Val]
-  num_groups_partition: [32] # TODO: If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
+  num_groups_partition: [16] # TODO: If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
   group_filter_cls: roll.pipeline.agentic.env_manager.gui_traj_env_manager.AndroidEnvGroupFilter
 
 
@@ -260,45 +261,8 @@ custom_envs:
           grpc_ports: ${android_servers.server1.grpc_ports}
           adb_path: ${android_servers.server1.adb_path} 
 
-        - service_url: ${android_servers.server2.service_url}
-          envs_num: ${android_servers.server2.envs_num}
-          console_ports: ${android_servers.server2.console_ports}
-          grpc_ports: ${android_servers.server2.grpc_ports}
-          adb_path: ${android_servers.server2.adb_path} 
-
-# android_world: &android_world
-#   env_type: remote_multi_android
-#   max_steps: ${max_actions_per_traj}
-#   max_tokens_per_step: ${max_tokens_per_step}
-#   env_manager_cls: roll.pipeline.agentic.env_manager.android_step_env_manager.AndroidStepEnvManager
-#   use_thread_lock: false
-#   max_env_step_concurrent: 32
-#   env_config:
-#     task: all_task
-#     task_family: android_world
-#     max_image_tokens: 600
-#     group_size: ${train_env_manager.group_size}
-#     mode: train
-#     env_configs:
-#       - service_url: ${android_servers.server1.service_url}
-#         envs_num: ${android_servers.server1.envs_num}
-#         console_ports: ${android_servers.server1.console_ports}
-#         grpc_ports: ${android_servers.server1.grpc_ports}
-#         adb_path: ${android_servers.server1.adb_path}
-#         group_size: ${android_servers.server1.group_size}
-
-#       - service_url: ${android_servers.server2.service_url}
-#         envs_num: ${android_servers.server2.envs_num}
-#         console_ports: ${android_servers.server2.console_ports}
-#         grpc_ports: ${android_servers.server2.grpc_ports}
-#         adb_path: ${android_servers.server2.adb_path}
-#         group_size: ${android_servers.server2.group_size}
-
-# custom_envs:
-
-#   AndroidEnv-Train:
-#     <<: *android_world   # 直接完整复用
-
-#   AndroidEnv-Val-Task:
-#     <<: *android_world
-
+        # - service_url: ${android_servers.server2.service_url}
+        #   envs_num: ${android_servers.server2.envs_num}
+        #   console_ports: ${android_servers.server2.console_ports}
+        #   grpc_ports: ${android_servers.server2.grpc_ports}
+        #   adb_path: ${android_servers.server2.adb_path} 

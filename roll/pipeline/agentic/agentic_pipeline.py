@@ -129,6 +129,22 @@ class AgenticPipeline(BasePipeline):
             self.set_checkpoint_clusters(self.actor_train)
 
         self.running = RunningMoments()
+
+        # Self-evolve mode: lazily initialized coordinator (round-level only, episode-level is in env_manager)
+        self.self_evolve_config = getattr(self.pipeline_config, "self_evolve", {})
+        self.self_evolve_enabled: bool = self.self_evolve_config.get("enabled", False)
+        self._self_evolve_coordinator = None
+
+    @property
+    def self_evolve_coordinator(self):
+        """Lazy-load the SelfEvolveCoordinator for round-level operations."""
+        if self._self_evolve_coordinator is None:
+            if self.self_evolve_enabled:
+                from roll.pipeline.agentic.self_evolve_coordinator import SelfEvolveCoordinator
+
+                self._self_evolve_coordinator = SelfEvolveCoordinator(config=self.self_evolve_config)
+                logger.info("[SelfEvolve] AgenticPipeline self-evolve mode enabled")
+        return self._self_evolve_coordinator
         
 
     @torch.no_grad()
@@ -259,7 +275,7 @@ class AgenticPipeline(BasePipeline):
 
                     with Timer(name="cal_token_reward", logger=None) as timer:
                         # Expand compute_response_level_rewards and add kl_penalty.
-                        # batch, kl_metrics = apply_kl_penalty(data=batch, kl_ctrl=self.kl_ctrl, kl_penalty=self.pipeline_config.kl_penalty)
+                        batch, kl_metrics = apply_kl_penalty(data=batch, kl_ctrl=self.kl_ctrl, kl_penalty=self.pipeline_config.kl_penalty)
                         batch, token_level_metrics = compute_token_reward(batch, self.pipeline_config, self.kl_ctrl)
                         metrics.update(token_level_metrics)
                     metrics["time/step_cal_token_reward"] = timer.last
@@ -307,7 +323,23 @@ class AgenticPipeline(BasePipeline):
                 self.state.step = global_step
                 self.state.log_history.append(metrics)
 
+                if self.pipeline_config.metrics_dump_dir:
+                    metrics_to_write = {"global_step": global_step, **metrics}
+                    step_dir = os.path.join(self.pipeline_config.metrics_dump_dir, f"step_{global_step}")
+                    os.makedirs(step_dir, exist_ok=True)
+                    with open(os.path.join(step_dir, "metrics.jsonl"), "a", encoding="utf-8") as f:
+                        f.write(json.dumps(metrics_to_write, ensure_ascii=False) + "\n")
+
                 self.do_checkpoint(global_step=global_step)
+
+                # Self-evolve: round-end task generation hook
+                round_update_interval = self.self_evolve_config.get("round_update_interval", 1)
+                if self.self_evolve_enabled and self.self_evolve_coordinator is not None:
+                    if global_step > 0 and global_step % round_update_interval == 0:
+                        try:
+                            self.self_evolve_coordinator.on_round_end()
+                        except Exception as e:
+                            logger.warning(f"[SelfEvolve] on_round_end failed: {e}")
 
                 with Timer(name="log", logger=None) as log_timer:
                     if self.pipeline_config.logging_steps > 0 and global_step % self.pipeline_config.logging_steps == 0:

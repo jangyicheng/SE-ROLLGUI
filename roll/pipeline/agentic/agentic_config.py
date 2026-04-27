@@ -167,6 +167,14 @@ class AgenticConfig(PPOConfig):
     train_env_manager: EnvManagerConfig = field(default_factory=EnvManagerConfig)
     val_env_manager: EnvManagerConfig = field(default_factory=EnvManagerConfig)
     render_save_dir: str = field(default=None, metadata={"help": "Directory to save rendered frames."})
+    metrics_dump_dir: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Directory to persist training metrics per step as JSON Lines. "
+            "Each step writes one JSON object with 'global_step' and all metrics. "
+            "If None, metrics are only kept in memory (and checkpointed periodically)."
+        },
+    )
     reward_normalization: RewardNormalizationConfig = field(
         default_factory=RewardNormalizationConfig, metadata={"help": "Reward normalization configuration."}
     )
@@ -178,6 +186,22 @@ class AgenticConfig(PPOConfig):
     step_reward_weight: float = field(default=1.0, metadata={"help": "Step reward weight, used in GiGPO."})
     step_reward_gamma: float = field(default=0.95, metadata={"help": "Gamma parameter for step reward calculation"})
     ratio_type: Literal["token", "segment"] = field(default="token", metadata={"help": "Ratio type: token or segment"})
+
+    # self-evolve mode configuration
+    self_evolve: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "enabled": False,
+            "feedback_root": "./trajectories/self_evolve",
+            "generated_task_root": "./data/tasks/generated",
+            "parquet_root": "./data/self_evolve_parquet",
+            "round_update_interval": 1,
+        },
+        metadata={
+            "help": "Self-evolving mode configuration. "
+            "When enabled, the training loop uses MobileJudge for reward signals "
+            "and autonomously generates new curriculum tasks based on round feedback."
+        },
+    )
 
     def __post_init__(self):
         self.actor_infer.generating_args.num_return_sequences = 1

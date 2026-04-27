@@ -9,14 +9,5 @@ sh jyc/scripts/evaluate_agentic_pipeline.sh
 sh jyc/scripts/run_agentic_pipeline.sh
 
 
-#  Allocated group 0 for task: ExpenseDeleteSingle
-#  Allocated group 1 for task: RecipeAddMultipleRecipes
-#  Allocated group 2 for task: ClockStopWatchPausedVerify
-#  Allocated group 3 for task: SimpleCalendarAddOneEventRelativeDay
-#  Allocated group 4 for task: MarkorChangeNoteContent
-#  Allocated group 5 for task: SystemWifiTurnOff
-#  Allocated group 6 for task: MarkorCreateNoteAndSms
-#  Allocated group 7 for task: RecipeAddMultipleRecipesFromMarkor2
-#  Allocated group 8 for task: SimpleSmsSend
 
 

@@ -237,7 +237,7 @@ class RemoteAndroidEnv(TaskManagerUtilsMixin, Env):
             "go_home": go_home,
             "task": target_task,
             "task_family": self.task_family,
-            "seed": 42
+            "seed": seed
         }
         
         if self.env_id == 0:
@@ -282,7 +282,7 @@ class RemoteAndroidEnv(TaskManagerUtilsMixin, Env):
         self.max_steps = self.task.get("max_steps", self.max_steps)
 
         task_name = self.task.get("name", "unknown_task")
-        timestamp = time.strftime("%Y%m%d_%H%M")
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
         self.current_task_dir = self.save_dir / f"{task_name}" / f"{timestamp}"
         self.current_task_dir.mkdir(parents=True, exist_ok=True)
 
@@ -361,3 +361,267 @@ class RemoteAndroidEnv(TaskManagerUtilsMixin, Env):
             requests.post(f"{self.service_url}/close", json={"console_port": self.console_port})
         except:
             pass
+
+    # ============== Exploration Methods ==============
+
+    def explore_reset(
+        self,
+        go_home: bool = True,
+        seed: int = 42,
+        target_task: str | None = None,
+        exploration_id: str | None = None,
+    ):
+        """Reset for exploration mode without task_manager integration.
+
+        This method differs from reset() in that it:
+        - Does not interact with task_manager
+        - Does not save to the standard trajectory directory
+        - Uses exploration-specific output directory
+        - Can work with arbitrary task names for free exploration
+        """
+        super().reset(seed=seed)
+        self.current_steps = 0
+        self.start_time = time.time()
+        self.assigned_task = target_task
+        self._task_returned_for_current_episode = False
+
+        payload = {
+            "console_port": self.console_port,
+            "go_home": go_home,
+            "task": target_task,
+            "task_family": self.task_family,
+            "seed": seed,
+        }
+
+        try:
+            data = self.call_reset(payload)
+        except Exception as e:
+            self._need_recover = True
+            self._try_recover()
+            return None, {
+                "env_failed": True,
+                "failed_stage": "explore_reset",
+                "failure_reason": str(e),
+                "recoverable": True,
+            }
+
+        if self._is_failed_payload(data):
+            self._need_recover = True
+            self._try_recover()
+            return None, {
+                "env_failed": True,
+                "failed_stage": "explore_reset",
+                "failure_reason": data.get("error", "service returned status=failed"),
+                "recoverable": True,
+                "raw": data,
+            }
+
+        try:
+            self.current_obs = self._decode_obs(data)
+        except Exception as e:
+            logger.warning(f"Failed to decode observation: {e}")
+            self.current_obs = None
+
+        return self.current_obs, data.get("info", {})
+
+    def explore_step(self, action: str | dict, disable_judge: bool = True):
+        """Execute exploration step without reward evaluation.
+
+        This method differs from step() in that it:
+        - Does not evaluate task success (is_successful)
+        - Does not call task_manager completion
+        - Focuses on recording trajectory for curriculum generation
+
+        Args:
+            action: The action to execute
+            disable_judge: If True, skip success evaluation (default True for exploration)
+
+        Returns:
+            Tuple of (observation, reward, terminate, info)
+        """
+        payload = {
+            "console_port": self.console_port,
+            "action": action,
+        }
+
+        try:
+            data = self.call_step(payload)
+        except Exception as e:
+            self._need_recover = True
+            self._try_recover()
+            return self.current_obs, 0.0, True, None, {
+                "env_failed": True,
+                "failed_stage": "explore_step",
+                "failure_reason": str(e),
+                "recoverable": True,
+            }
+
+        if self._is_failed_payload(data):
+            self._need_recover = True
+            self._try_recover()
+            return self.current_obs, 0.0, True, None, {
+                "env_failed": True,
+                "failed_stage": "explore_step",
+                "failure_reason": data.get("error", "service returned status=failed"),
+                "recoverable": True,
+                "raw": data,
+            }
+
+        obs_np = self._decode_obs(data)
+        self.current_obs = obs_np
+        self.current_steps += 1
+
+        # For exploration, we don't automatically terminate unless max_steps reached
+        terminate = self.current_steps >= self.max_steps
+
+        # Still track terminate if explicitly requested
+        if isinstance(action, dict):
+            action_name = action.get("arguments", {}).get("action", "")
+        elif isinstance(action, str):
+            action_name = action
+        else:
+            action_name = ""
+
+        if action_name in ["terminate", "done"]:
+            terminate = True
+
+        # Get success info but don't use it for termination in exploration mode
+        is_success = data.get("info", {}).get("is_success", 0)
+
+        return obs_np, data.get("reward", 0.0), terminate, None, {
+            "is_success": is_success,
+            "action_name": action_name,
+            "current_step": self.current_steps,
+            "max_steps": self.max_steps,
+            "exploration_mode": True,
+        }
+
+    def get_current_app(self) -> str | None:
+        """Get the currently focused/foreground app name.
+
+        This is used during exploration to track which apps are discovered.
+
+        Returns:
+            App name string if determinable, None otherwise
+        """
+        # Try to infer from current observation/task context
+        if hasattr(self, "task") and self.task:
+            task_name = self.task.get("name", "")
+            if task_name:
+                # Extract app name from task name (e.g., "ContactsAddContact" -> "Contacts")
+                for prefix in ["Contacts", "Calendar", "SimpleCalendar", "SMS", "SimpleSms",
+                              "Expense", "Files", "Markor", "OsmAnd", "Recipe", "Retro",
+                              "VLC", "System", "Browser", "Camera", "Clock", "AudioRecorder"]:
+                    if task_name.startswith(prefix):
+                        return prefix
+        return None
+
+    def explore_loop(
+        self,
+        max_steps: int = 50,
+        action_generator=None,
+        save_screenshots: bool = True,
+        output_dir: str = "./exploration_output",
+    ) -> dict:
+        """Run a complete exploration loop.
+
+        This is a convenience method that combines explore_reset and explore_step
+        for easy exploration execution.
+
+        Args:
+            max_steps: Maximum number of exploration steps
+            action_generator: Callable that takes (observation, step) and returns action
+            save_screenshots: Whether to save screenshots at each step
+            output_dir: Directory to save exploration output
+
+        Returns:
+            Dictionary containing exploration results and trajectory
+        """
+        from pathlib import Path
+
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        screenshots_dir = output_path / "screenshots"
+        if save_screenshots:
+            screenshots_dir.mkdir(parents=True, exist_ok=True)
+
+        self.max_steps = max_steps
+
+        # Reset for exploration
+        obs, info = self.explore_reset(go_home=True, target_task=None)
+        if obs is None:
+            return {"success": False, "error": "Exploration reset failed", "trajectory": []}
+
+        trajectory = []
+        discovered_apps = set()
+        discovered_actions = set()
+
+        # Save initial screenshot
+        if save_screenshots and obs is not None:
+            Image.fromarray(obs).save(screenshots_dir / "step_000_init.png")
+
+        # Get initial app
+        current_app = self.get_current_app()
+        if current_app:
+            discovered_apps.add(current_app)
+
+        for step_idx in range(max_steps):
+            # Generate or get action
+            if action_generator is not None:
+                action = action_generator(obs, step_idx)
+            else:
+                # Default: random action
+                import random
+                actions = [
+                    {"arguments": {"action": "click", "coordinate": [300, 400]}},
+                    {"arguments": {"action": "swipe", "coordinate": [300, 600], "coordinate2": [300, 200]}},
+                    {"arguments": {"action": "wait"}},
+                    {"arguments": {"action": "navigate_back"}},
+                ]
+                action = random.choice(actions)
+
+            # Execute step
+            obs, reward, terminate, _, step_info = self.explore_step(action)
+
+            # Record step
+            if isinstance(action, dict):
+                action_type = action.get("arguments", {}).get("action", "unknown")
+            else:
+                action_type = "text"
+
+            discovered_actions.add(action_type)
+
+            step_record = {
+                "step": step_idx,
+                "action": action,
+                "action_type": action_type,
+                "reward": reward,
+                "terminate": terminate,
+                "info": step_info,
+            }
+
+            # Save screenshot
+            if save_screenshots and obs is not None:
+                screenshot_path = screenshots_dir / f"step_{step_idx + 1:03d}.png"
+                Image.fromarray(obs).save(screenshot_path)
+                step_record["screenshot_path"] = str(screenshot_path)
+
+            trajectory.append(step_record)
+
+            # Track app changes
+            current_app = self.get_current_app()
+            if current_app:
+                discovered_apps.add(current_app)
+
+            if terminate:
+                break
+
+        return {
+            "success": True,
+            "total_steps": len(trajectory),
+            "discovered_apps": list(discovered_apps),
+            "discovered_actions": list(discovered_actions),
+            "trajectory": trajectory,
+            "output_dir": str(output_path),
+            "screenshots_dir": str(screenshots_dir) if save_screenshots else None,
+        }

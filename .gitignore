@@ -177,3 +177,5 @@ output/
 
 # 自定义
 trajectories/
+reward_trajectories/
+androidworld-server/

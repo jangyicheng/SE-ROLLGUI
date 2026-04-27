@@ -146,7 +146,24 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
         self.trajectory_cache: Optional[RolloutCache] = None
         self.keep_last_k = self.env_config.get("keep_last_k", 8)  # 仅保留最近的k轮对话历史
 
-        
+        # Self-evolve mode: lazily initialized coordinator
+        self.self_evolve_config = self.env_config.get("self_evolve", {})
+        self.self_evolve_enabled: bool = self.self_evolve_config.get("enabled", False)
+        self._self_evolve_coordinator = None
+
+    @property
+    def self_evolve_coordinator(self):
+        """Lazy-load the SelfEvolveCoordinator when first needed."""
+        if self._self_evolve_coordinator is None:
+            if self.self_evolve_enabled:
+                from roll.pipeline.agentic.self_evolve_coordinator import SelfEvolveCoordinator
+
+                self._self_evolve_coordinator = SelfEvolveCoordinator(config=self.self_evolve_config)
+                self.logger.info("[SelfEvolve] AndroidStepEnvManager self-evolve mode enabled")
+            else:
+                self._self_evolve_coordinator = None
+        return self._self_evolve_coordinator
+
     @property
     def task(self):
         return self.env.task
@@ -286,6 +303,43 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
         """
         Construct step-wise training samples from the collected trajectory.
         """
+        judge_reward_override: Optional[float] = None
+        judge_feedback: Optional[str] = None
+
+        if self.self_evolve_enabled and self.self_evolve_coordinator is not None:
+            try:
+                screenshot_paths = [
+                    h.get("screenshot_path") for h in rollout_cache.history if h.get("screenshot_path")
+                ]
+                action_history = [
+                    h.get("llm_response", "").replace("<|im_end|>", "")[:200]
+                    for h in rollout_cache.history if h.get("llm_response")
+                ]
+                task_name = self.env.task.get("name", "unknown") if self.env.task else "unknown"
+                task_id = f"{task_name}_{rollout_cache.group_id}_{rollout_cache.episode_id}"
+
+                episode_artifacts = {
+                    "task_id": task_id,
+                    "instruction": self.env.task.get("goal", "") if self.env.task else "",
+                    "snapshot": self.env.task.get("snapshot", "") if self.env.task else "",
+                    "screenshot_paths": screenshot_paths,
+                    "action_history": action_history,
+                    "env_signals": {
+                        "env_raw_score": sum(i["reward"] for i in rollout_cache.history),
+                        "env_raw_success": False,
+                    },
+                }
+                judge_result = self.self_evolve_coordinator.on_episode_end(
+                    episode_artifacts=episode_artifacts,
+                    task_id=task_id,
+                    episode_id=str(rollout_cache.episode_id),
+                )
+                if judge_result:
+                    judge_reward_override = judge_result.get("reward", 0.0)
+                    judge_feedback = judge_result.get("feedback_summary", "")
+            except Exception as e:
+                self.logger.warning(f"[SelfEvolve] on_episode_end failed: {e}")
+
         
         if "observation" in rollout_cache.history[-1]:
             rollout_cache.history.pop(-1)
@@ -308,6 +362,14 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
             score_tensor = torch.tensor([0] * len(token_ids), dtype=torch.float).unsqueeze(0)
             # score_tensor[0][-1] = max(history["reward"], episode_score)
             score_tensor[0][-1] = history["reward"]
+
+            is_last_step = step == len(rollout_cache.history) - 1
+            if is_last_step and judge_reward_override is not None:
+                score_tensor[0][-1] = judge_reward_override
+                effective_episode_score = judge_reward_override
+            else:
+                effective_episode_score = episode_score
+
             position_ids = attention_mask.cumsum(dim=-1)
 
             input_ids = pad_to_length(
@@ -331,7 +393,7 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
                     batch_size=input_ids.shape[0],
                 ),
                 non_tensor_batch={
-                    "episode_scores": np.array([episode_score], dtype=object),
+                    "episode_scores": np.array([effective_episode_score], dtype=object),
                     "step_scores": np.array([history["reward"]], dtype=object),  # step-level reward, return by env
                     "tags": np.array([self.rollout_cache.tag], dtype=object),
                     "env_ids": np.array([self.rollout_cache.env_id], dtype=object),
@@ -344,7 +406,11 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
             non_tensor_batch = history.get("non_tensor_batch")
             if isinstance(non_tensor_batch, dict) and non_tensor_batch:
                 lm_input.non_tensor_batch.update(non_tensor_batch)
-                
+
+            if is_last_step and judge_feedback:
+                lm_input.non_tensor_batch["judge_feedback"] = judge_feedback
+                lm_input.non_tensor_batch["judge_reward"] = judge_reward_override
+
             lm_input.meta_info.update({"task": self.task["name"]})
             
             
@@ -391,12 +457,12 @@ class AndroidStepEnvManager(GuiTrajEnvManager):
 
 
         
-        # 保存 DataProto 到全局轨迹缓存
-        if episode_score > 0.5:  # 仅保存成功的轨迹
+        save_threshold = judge_reward_override if self.self_evolve_enabled and judge_reward_override is not None else episode_score
+        if save_threshold > 0.5:
             try:
                 self.save_trajectory(rollout=batch)
             except Exception as e:
-                self.logger.debug(f"save_trajectory failed: {e}")        
+                self.logger.debug(f"save_trajectory failed: {e}")
 
         return batch
 

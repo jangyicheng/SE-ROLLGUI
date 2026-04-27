@@ -160,6 +160,14 @@ class RemoteMobileEnv(TaskManagerUtilsMixin, Env):
             logger.warning(f"recover failed: {e}")
             self._need_recover = True
 
+    def _call_reset_with_params(self, payload):
+        """Wrapper with error handling for reset_with_params."""
+        try:
+            return self.call_reset_with_params(payload)
+        except Exception as e:
+            logger.warning(f"reset_with_params failed: {e}")
+            raise
+
     @retry(
         stop=stop_after_attempt(3),  # 最多尝试3次
         wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避等待
@@ -179,6 +187,18 @@ class RemoteMobileEnv(TaskManagerUtilsMixin, Env):
     @log_time_on_error
     def call_reset(self, payload):
         resp = requests.post(f"{self.service_url}/reset", json=payload, timeout=TIMEOUT)
+        resp.raise_for_status()
+        return resp.json()
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((requests.exceptions.RequestException, ValueError)),
+    )
+    @log_time_on_error
+    def call_reset_with_params(self, payload):
+        """Call the /reset_with_params endpoint for deterministic task initialization."""
+        resp = requests.post(f"{self.service_url}/reset_with_params", json=payload, timeout=TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
@@ -251,27 +271,80 @@ class RemoteMobileEnv(TaskManagerUtilsMixin, Env):
         self.start_time = time.time()
         self.assigned_task = target_task
         self._task_returned_for_current_episode = False
+
+        # Support self-evolve mode: recognize params_path in task dict
+        task_dict = target_task if isinstance(target_task, dict) else None
+        params_path = task_dict.get("params_path") if task_dict else None
+        snapshot = task_dict.get("snapshot") if task_dict else None
+
         normalized_task = self._normalize_target_task(target_task)
 
-        payload = {
-            "console_port": self.console_port,
-            "go_home": go_home,
-            "task": normalized_task,
-            "task_family": self.task_family,
-        }
+        # Self-evolve: if params_path is available, use reset_with_params for deterministic init
+        if params_path:
+            try:
+                import pickle
 
-        try:
-            data = self.call_reset(payload)
-        except Exception as e:
-            self._return_task_once(reason=f"reset_exception:{e}")
-            self._need_recover = True
-            self._try_recover()
-            return None, {
-                "env_failed": True,
-                "failed_stage": "reset",
-                "failure_reason": str(e),
-                "recoverable": True,
+                with open(params_path, "rb") as f:
+                    params = pickle.load(f)
+                payload = {
+                    "console_port": self.console_port,
+                    "go_home": go_home,
+                    "task": normalized_task,
+                    "task_family": self.task_family,
+                    "snapshot": snapshot or "default",
+                    "params": params,
+                }
+                logger.info(f"[SelfEvolve] Using reset_with_params with {params_path}")
+                data = self._call_reset_with_params(payload)
+            except FileNotFoundError:
+                logger.warning(f"[SelfEvolve] params_path not found: {params_path}, falling back to standard reset")
+                payload = {
+                    "console_port": self.console_port,
+                    "go_home": go_home,
+                    "task": normalized_task,
+                    "task_family": self.task_family,
+                }
+                try:
+                    data = self.call_reset(payload)
+                except Exception as e:
+                    self._return_task_once(reason=f"reset_exception:{e}")
+                    self._need_recover = True
+                    self._try_recover()
+                    return None, {
+                        "env_failed": True,
+                        "failed_stage": "reset",
+                        "failure_reason": str(e),
+                        "recoverable": True,
+                    }
+            except Exception as e:
+                self._return_task_once(reason=f"reset_exception:{e}")
+                self._need_recover = True
+                self._try_recover()
+                return None, {
+                    "env_failed": True,
+                    "failed_stage": "reset",
+                    "failure_reason": str(e),
+                    "recoverable": True,
+                }
+        else:
+            payload = {
+                "console_port": self.console_port,
+                "go_home": go_home,
+                "task": normalized_task,
+                "task_family": self.task_family,
             }
+            try:
+                data = self.call_reset(payload)
+            except Exception as e:
+                self._return_task_once(reason=f"reset_exception:{e}")
+                self._need_recover = True
+                self._try_recover()
+                return None, {
+                    "env_failed": True,
+                    "failed_stage": "reset",
+                    "failure_reason": str(e),
+                    "recoverable": True,
+                }
 
         if self._is_failed_payload(data):
             self._return_task_once(reason=f"reset_failed:{data.get('error', 'unknown')}")

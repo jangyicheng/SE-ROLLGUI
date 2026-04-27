@@ -400,6 +400,15 @@ class GuiTrajEnvManager(BaseEnvManager):
         content["messages"] = messages
         return lm_input
 
+    def on_episode_end(self, rollout_cache: RolloutCache) -> RolloutCache:
+        """Hook called at the end of each episode.
+
+        Subclasses (e.g. AndroidStepEnvManager) can override this to inject
+        self-evolve logic such as judge invocation and reward override.
+        By default, returns the rollout_cache unchanged.
+        """
+        return rollout_cache
+
     def formulate_rollouts(self, rollout_cache: RolloutCache):
         """
 

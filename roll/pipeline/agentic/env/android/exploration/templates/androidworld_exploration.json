@@ -1,0 +1,10 @@
+{
+    "id": "androidworld_free_exploration",
+    "instruction": "You have full access to this Android phone. Your goal is to explore the most common and essential features of the current app and the entire system as thoroughly as possible. Explore different screens, try various UI elements (buttons, menus, inputs, toggles), and discover what actions are available. Screenshots will be captured at each step. Do NOT say 'done' or 'finish' until you have explored at least 30 steps. Try to cover: app launch, settings navigation, content creation, search, and file/media operations if available.",
+    "task_name": "android_world_task",
+    "task_family": "android_world",
+    "seed": 42,
+    "trajectory_output_dir": "androidworld_exploration_output",
+    "max_steps": 50,
+    "description": "Free exploration template for AndroidWorld environment. This template guides a VLM to perform unconstrained exploration of the Android phone, discovering apps, UI elements, and available actions."
+}

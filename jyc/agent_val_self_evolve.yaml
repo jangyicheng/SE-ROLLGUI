@@ -1,0 +1,236 @@
+defaults:
+  - ./config/vl_traj_envs@_here_
+  - ./config/deepspeed_zero@_here_
+  - ./config/deepspeed_zero2@_here_
+  - ./config/deepspeed_zero3@_here_
+  - ./config/deepspeed_zero3_cpuoffload@_here_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+# =============================================
+# 自进化模式（Self-Evolving Mode）配置
+# =============================================
+# 所有自进化相关代码路径受此开关保护，设为 false 时等同于常规训练
+self_evolve:
+  enabled: true
+  # judge 结果存储根目录（含 episode judge_input/result 和 round_feedback）
+  feedback_root: "./trajectories/self_evolve"
+  # 课程生成器输出的任务 JSON 文件存放根目录
+  generated_task_root: "./data/tasks/generated"
+  # 自进化 parquet 文件存放目录
+  parquet_root: "./data/self_evolve_parquet"
+  # 每隔多少 global_step 触发一次任务生成（1 = 每步都触发）
+  round_update_interval: 1
+
+# =============================================
+# 实验基础配置
+# =============================================
+Model: Qwen3-VL-4B-Instruct
+exp_name: ${Model}-self-evolve
+seed: 42
+logging_dir: ./output/logs
+output_dir: ./output
+render_save_dir: ./output/render
+system_envs:
+  USE_MODELSCOPE: '1'
+  # OPENAI_API_KEY: "your-api-key"   # 如使用外部 judge，请设置
+
+# =============================================
+# 训练 / 评估流程配置
+# =============================================
+max_steps: 32          # 总训练步数，建议 16-128
+save_steps: 8          # checkpoint 保存间隔
+logging_steps: 1        # 日志记录间隔
+eval_steps: -1         # 评估间隔（-1 表示不启用）
+resume_from_checkpoint: false
+checkpoint_config:
+  type: file_system
+  output_dir: ckpt/${exp_name}
+
+# =============================================
+# 批处理与序列长度
+# =============================================
+rollout_batch_size: 32  # 每步参与 rollout 的任务数量
+val_batch_size: 40
+sequence_length: 2048
+
+# =============================================
+# PPO / GRPO 算法核心参数
+# =============================================
+enable_reference: true
+advantage_clip: 0.2
+ppo_epochs: 4
+adv_estimator: "grpo"
+pg_clip_high: 0.28
+init_kl_coef: 0.001
+whiten_advantages: true
+entropy_loss_coef: 0
+max_grad_norm: 1.0
+use_kl_loss: true
+
+# =============================================
+# 模型预训练路径
+# =============================================
+pretrain: /HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/Models/${Model}
+
+# =============================================
+# 分布式训练配置
+# =============================================
+num_gpus_per_node: 4
+num_nodes: 1
+
+# =============================================
+# Actor 训练集群（使用 DeepSpeed ZeRO-3）
+# =============================================
+actor_train:
+  model_args:
+    attn_implementation: fa2
+    disable_gradient_checkpointing: false
+    dtype: bf16
+  training_args:
+    learning_rate: 3.0e-6
+    weight_decay: 0
+    per_device_train_batch_size: 4
+    gradient_accumulation_steps: 16
+    warmup_steps: 4
+    lr_scheduler_type: cosine
+  data_args:
+    template: native
+  strategy_args:
+    strategy_name: deepspeed_train
+    strategy_config: ${deepspeed_zero3}
+  device_mapping: list(range(0,2))
+  infer_batch_size: 16
+
+# =============================================
+# Actor 推理集群（使用 vLLM）
+# =============================================
+actor_infer:
+  model_args:
+    flash_attn: fa2
+    disable_gradient_checkpointing: false
+    dtype: bf16
+  generating_args:
+    max_new_tokens: 512
+    top_p: 1.0
+    top_k: 40
+    num_beams: 1
+    temperature: 1.0
+    num_return_sequences: 1
+  data_args:
+    template: native
+  strategy_args:
+    strategy_name: vllm
+    strategy_config:
+      gpu_memory_utilization: 0.6
+      block_size: 16
+      load_format: auto
+      max_model_len: 2048
+  num_gpus_per_worker: 1
+  device_mapping: list(range(0,2))
+  infer_batch_size: 4
+
+# =============================================
+# Reference 模型（用于 KL 散度计算）
+# =============================================
+reference:
+  model_args:
+    attn_implementation: fa2
+    disable_gradient_checkpointing: false
+    dtype: bf16
+  data_args:
+    template: native
+  strategy_args:
+    strategy_name: hf_infer
+    strategy_config: ~
+  device_mapping: list(range(1,2))
+  infer_batch_size: 16
+
+# =============================================
+# Reward 归一化配置
+# =============================================
+reward_normalization:
+  grouping: traj_group_id
+  norm_mean_type: group
+  method: mean
+
+# =============================================
+# 环境与 Agent 配置
+# =============================================
+max_tokens_per_step: 512
+adb_path: /root/android-sdk/platform-tools/adb
+START_CONSOLE_PORT: 5554
+START_GRPC_PORT: 8554
+max_actions_per_traj: 40
+envs_num: 16
+group_size: 8
+
+# =============================================
+# 训练环境管理器
+# =============================================
+train_env_manager:
+  max_env_num_per_worker: 32
+  num_env_groups: 4
+  group_size: ${group_size}
+  tags: [AndroidEnv-Train]
+  num_groups_partition: [4]
+  group_filter_cls: roll.pipeline.agentic.env_manager.gui_traj_env_manager.AndroidEnvGroupFilter
+
+# =============================================
+# 验证环境管理器
+# =============================================
+val_env_manager:
+  max_env_num_per_worker: 32
+  num_env_groups: 16
+  group_size: 1
+  tags: [AndroidEnv-Val]
+  num_groups_partition: [16]
+  group_filter_cls: roll.pipeline.agentic.env_manager.gui_traj_env_manager.AndroidEnvGroupFilter
+
+# =============================================
+# Android 服务集群配置
+# =============================================
+android_servers:
+  server1:
+    adb_ip: 127.0.0.1
+    adb_port: 5554
+  server2:
+    adb_ip: 127.0.0.1
+    adb_port: 5556
+
+# =============================================
+# 训练环境自定义配置
+# =============================================
+custom_envs:
+  AndroidEnv-Train:
+    # 远程 MobileWorld 环境类型
+    env_type: RemoteMobileEnv
+    # 使用 AndroidStepEnvManager（支持自进化钩子）
+    env_manager_cls: roll.pipeline.agentic.env_manager.android_step_env_manager.AndroidStepEnvManager
+    env_config:
+      env_type: RemoteMobileEnv
+      env_id: null
+      group_id: null
+      max_steps: 40
+      max_tokens_per_step: 512
+      rollout_data_type: trajectory
+      keep_last_k: 8
+      # 自进化开关（优先级高于顶层 self_evolve）
+      self_evolve:
+        enabled: true
+        feedback_root: "./trajectories/self_evolve"
+
+  AndroidEnv-Val:
+    env_type: RemoteMobileEnv
+    env_manager_cls: roll.pipeline.agentic.env_manager.android_step_env_manager.AndroidStepEnvManager
+    env_config:
+      env_type: RemoteMobileEnv
+      env_id: null
+      group_id: null
+      max_steps: 40
+      max_tokens_per_step: 512
+      rollout_data_type: trajectory
+      keep_last_k: 8
