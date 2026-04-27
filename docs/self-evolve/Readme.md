@@ -308,7 +308,179 @@ self_evolve_coordinator.on_round_end(
 
 ---
 
-## 八、关键设计决策
+## 十二、vLLM 模型后端配置
+
+自进化模式的探索阶段和课程任务生成阶段均依赖 VLM（视觉语言模型）提供决策和生成能力。框架提供了统一的 `VLMModelFactory`，支持本地 vLLM 服务、OpenAI 云端 API 和 HuggingFace TGI 三种后端。
+
+### 12.1 支持的后端
+
+| 后端 | 说明 | 典型场景 |
+|---|---|---|
+| `vllm` | 本地 vLLM 服务，OpenAI-compatible API | 自托管，推荐用于探索阶段 |
+| `openai` | OpenAI 官方 API 或第三方兼容端点 | 快速验证，有网络条件 |
+| `huggingface` | HuggingFace TGI 或 vLLM HF 推理端点 | HF 模型推理 |
+| `none` | 不使用模型，随机动作 | 调试/基准测试 |
+
+### 12.2 启动本地 vLLM 服务
+
+```bash
+# 示例：启动 Qwen2.5-VL-7B-Instruct vLLM 服务
+python -m vllm.entrypoints.openai.api_server \
+    --model Qwen/Qwen2.5-VL-7B-Instruct \
+    --served-model-name Qwen2.5-VL-7B-Instruct \
+    --trust-remote-code \
+    --dtype half \
+    --port 8000 \
+    --gpu-memory-utilization 0.85 \
+    --max-model-len 2048
+```
+
+> **注意**：部署时请根据实际 GPU 显存选择合适的模型（7B/14B/30B），确保 `port` 与后续配置中的 `--vllm_base_url` 一致。
+
+### 12.3 探索阶段模型配置
+
+#### Python API
+
+```python
+from roll.pipeline.agentic.env.android.exploration.model_client import VLMModelFactory
+
+# 方式一：直接指定后端
+model_client = VLMModelFactory.create(
+    backend="vllm",
+    model_name="Qwen/Qwen2.5-VL-7B-Instruct",
+    base_url="http://localhost:8000/v1",
+    temperature=1.0,
+    max_tokens=256,
+)
+
+# 方式二：从 URL 自动推断后端
+model_client = VLMModelFactory.from_url(
+    base_url="http://localhost:8000/v1",
+    model_name="Qwen/Qwen2.5-VL-7B-Instruct",
+)
+```
+
+#### CLI 脚本
+
+```bash
+# vLLM 后端（本地）
+python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py \
+    --env mobileworld \
+    --server_url http://localhost:9000 \
+    --model_backend vllm \
+    --model_name Qwen/Qwen2.5-VL-7B-Instruct \
+    --vllm_base_url http://localhost:8000/v1 \
+    --model_temperature 1.0 \
+    --model_max_tokens 256 \
+    --num_episodes 20 \
+    --max_steps 30 \
+    --output_dir ./exploration_output
+
+# OpenAI API 后端
+python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py \
+    --env mobileworld \
+    --server_url http://localhost:9000 \
+    --model_backend openai \
+    --model_name gpt-4o \
+    --model_temperature 1.0 \
+    --num_episodes 20
+
+# 随机动作（不使用模型）
+python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py \
+    --env mobileworld \
+    --server_url http://localhost:9000 \
+    --model_backend none
+```
+
+#### Shell 脚本
+
+```bash
+# 默认使用 vLLM
+export MODEL_BACKEND=vllm
+export MODEL_NAME=Qwen/Qwen2.5-VL-7B-Instruct
+export VLLM_BASE_URL=http://localhost:8000/v1
+
+bash jyc/scripts/run_exploration.sh
+```
+
+### 12.4 课程生成器模型配置
+
+课程任务生成器（`CurriculumTaskGenerator`）在 `SelfEvolveCoordinator._generate_tasks()` 中初始化，需要传入有效的 OpenAI API Key：
+
+```python
+from roll.pipeline.agentic.env.android.mobile.curriculum_task_generator import MobileSpecificTaskGenerator
+
+generator = MobileSpecificTaskGenerator(
+    openai_api_key="sk-...",      # OpenAI API Key（vLLM 不可用）
+    model="gpt-4o",               # 生成模型
+    enable_diversity=True,
+)
+```
+
+如果使用 OpenAI-compatible 端点替代 OpenAI 云端 API，可以将 API Key 替换为 vLLM 地址：
+
+```python
+import openai
+
+client = openai.OpenAI(
+    api_key="EMPTY",
+    base_url="http://localhost:8000/v1",  # 本地 vLLM 端点
+)
+```
+
+### 12.5 Judge 模型配置
+
+`MobileJudgeEvaluator`（`mobilejudge.py`）同样支持 vLLM 后端：
+
+```python
+from roll.pipeline.agentic.env.android.mobile.mobilejudge import MobileJudgeEvaluator
+
+evaluator = MobileJudgeEvaluator(
+    key_identification_screenshot_model="gpt-4o",   # 或本地 vLLM 模型名
+    key_points_outcome_model="gpt-4o",
+    max_image=50,
+    use_vllm_for_key_screenshot=True,
+    vllm_base_url="http://localhost:8000/v1",
+)
+```
+
+### 12.6 完整使用流程（vLLM）
+
+```bash
+# 1. 启动 MobileWorld 后端服务（环境侧）
+python roll/pipeline/agentic/env/android/GuiTaskEvalManager.py \
+    > roll/pipeline/agentic/env/android/GuiTaskEvalManager.log 2>&1 &
+
+# 2. 启动 vLLM 模型服务（模型侧）
+#    在另一个终端运行：
+python -m vllm.entrypoints.openai.api_server \
+    --model Qwen/Qwen2.5-VL-7B-Instruct \
+    --port 8000 \
+    --trust-remote-code \
+    --dtype half \
+    --gpu-memory-utilization 0.85
+
+# 3. 运行探索阶段（使用 vLLM）
+export MODEL_BACKEND=vllm
+export MODEL_NAME=Qwen/Qwen2.5-VL-7B-Instruct
+export VLLM_BASE_URL=http://localhost:8000/v1
+export NUM_EPISODES=20
+bash jyc/scripts/run_exploration.sh
+
+# 4. 启动自进化训练
+export MODEL_BACKEND=vllm
+bash jyc/scripts/run_self_evolve_pipeline.sh
+```
+
+### 12.7 常见问题
+
+| 问题 | 原因 | 解决方案 |
+|---|---|---|
+| `APIConnectionError` | vLLM 服务未启动或地址错误 | 确认 `http://localhost:8000/v1` 可访问：`curl http://localhost:8000/v1/models` |
+| `RateLimitError` | 请求频率过高 | 减小 `num_episodes` 并行数；在 vLLM 启动参数中添加 `--max-num-batched-tokens` |
+| 模型输出非 JSON 格式 | 模型格式遵从度不足 | 降低 `temperature`（如 0.3）；在 prompt 中强调 JSON 格式要求 |
+| 显存不足（OOM） | 模型过大 | 使用更小的模型（如 Qwen2.5-VL-3B-Instruct）；降低 `gpu-memory-utilization` |
+| `OPENAI_API_KEY` 未设置 | 使用 OpenAI 后端但未配置 Key | 切换到 `--model_backend vllm`；或 `export OPENAI_API_KEY=sk-...` |
 
 1. **Reward Override 而非替换**：Judge reward **覆盖**末步 reward 而非替换环境 reward，保证训练梯度来自 judge 信号，同时环境 reward 为 0 不影响训练
 2. **懒加载**：`SelfEvolveCoordinator` 在 `AndroidStepEnvManager` 和 `AgenticPipeline` 中均为懒加载属性，首次访问时才导入，禁用时零开销

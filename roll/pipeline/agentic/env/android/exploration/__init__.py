@@ -17,6 +17,7 @@ Key components:
 """
 
 from .explorer import AndroidWorldExplorer, MobileWorldExplorer
+from .model_client import ExplorerModelWrapper, VLMModelFactory
 from .params_manager import AndroidWorldParamsManager, MobileWorldParamsManager
 from .task_initializer import AndroidWorldTaskInitializer, MobileWorldTaskInitializer
 from .trajectory_formatter import TrajectoryFormatter, format_trajectory_for_curriculum
@@ -24,6 +25,8 @@ from .trajectory_formatter import TrajectoryFormatter, format_trajectory_for_cur
 __all__ = [
     "AndroidWorldExplorer",
     "MobileWorldExplorer",
+    "ExplorerModelWrapper",
+    "VLMModelFactory",
     "AndroidWorldParamsManager",
     "MobileWorldParamsManager",
     "AndroidWorldTaskInitializer",

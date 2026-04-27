@@ -10,6 +10,7 @@
 | `roll/pipeline/agentic/env/android/mobile/self_evolve_io.py` | JSON 文件原子读写（`.tmp` + `os.rename`）、目录管理、exploration 数据加载（桥接 TrajectoryFormatter） |
 | `roll/pipeline/agentic/env/android/mobile/self_evolve_feedback.py` | `build_round_feedback()` 聚合 episode 级 judge 结果为 round_feedback.json |
 | `roll/pipeline/agentic/self_evolve_coordinator.py` | `SelfEvolveCoordinator`：回合级编排、judge 中转（JSON 文件）、任务生成触发 |
+| `roll/pipeline/agentic/env/android/exploration/model_client.py` | `VLMModelFactory`（支持 openai / vllm / huggingface 后端）+ `ExplorerModelWrapper`（桥接 BaseExplorer 接口与 chat-message API） |
 
 ---
 
@@ -100,6 +101,39 @@
 | `_call_reset_with_params()` (L163-169) | **新增方法**：调用 `call_reset_with_params` 的错误处理封装 |
 | `call_reset_with_params()` (L199-206) | **新增方法**：带重试装饰器的 `/reset_with_params` 端点调用 |
 | `reset()` (L243-348) | **主要改动**：<br>1. 从 `target_task` dict 中识别 `params_path` 和 `snapshot` 字段（L256-260）<br>2. 若 `params_path` 存在：加载 pickle 文件，构建含 `params` 的 payload，调用 `_call_reset_with_params`（L284-298）<br>3. `params_path` 文件不存在时自动回退到标准 `reset`（L299-318）<br>4. 无 `params_path` 时走原有 `call_reset` 逻辑（L329-347） |
+
+---
+
+### 7. `roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py`
+
+| 改动位置 | 改动内容 |
+|---|---|
+| 文件头部 docstring (L1-14) | 更新使用示例，增加 vLLM 和 OpenAI 后端的命令行示例 |
+| 新增导入 (L22-24) | 导入 `VLMModelFactory` |
+| **`_build_model_client()`** (L27-50) | **新增函数**：根据 CLI 参数构造 `ExplorerModelWrapper`；支持 `none`（随机动作）模式 |
+| argparse 模型参数组 (L103-142) | 新增 `--model_backend`、`--model_name`、`--vllm_base_url`、`--api_key`、`--model_temperature`、`--model_max_tokens` 参数 |
+| `main()` 调用 (L167, L189) | Explorer 初始化时传入 `model_client=model_client`（替换原有 `model_client=None`）；`model_type` 参数移除 |
+| 结果打印 (L212) | 新增打印 `result.model` 字段，显示实际使用的模型名称 |
+
+---
+
+### 8. `roll/pipeline/agentic/env/android/exploration/__init__.py`
+
+| 改动位置 | 改动内容 |
+|---|---|
+| 新增导入 (L20) | 导入 `ExplorerModelWrapper` 和 `VLMModelFactory` |
+| `__all__` (L26-27) | 新增 `"ExplorerModelWrapper"`、`"VLMModelFactory"` 到导出列表 |
+
+---
+
+### 9. `jyc/scripts/run_exploration.sh`
+
+| 改动位置 | 改动内容 |
+|---|---|
+| 文件头注释 (L8-18) | 新增使用示例（vLLM、OpenAI、随机模式） |
+| 环境变量配置 (L22-31) | 新增 `MODEL_BACKEND`、`MODEL_NAME`、`VLLM_BASE_URL`、`MODEL_TEMPERATURE`、`MODEL_MAX_TOKENS` 环境变量（默认值：`vllm`、`Qwen/Qwen2.5-VL-7B-Instruct`、`http://localhost:8000/v1`） |
+| 命令行参数解析 (L33-64) | 新增 `while` 循环解析 `--model_backend`、`--model_name`、`--vllm_base_url`、`--num_episodes`、`--max_steps`、`--exploration_output_dir`、`--init_output_dir` 参数 |
+| 步骤 1 Explorer 调用 (L76-118) | 根据 `MODEL_BACKEND` 拼接不同 Python 命令行：vLLM 传入 `--model_backend vllm --model_name --vllm_base_url`；OpenAI 传入 `--model_backend openai --model_name`；none 传入 `--model_backend none` |
 
 ---
 

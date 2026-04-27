@@ -8,6 +8,17 @@
 # 使用方法:
 #   bash jyc/scripts/run_exploration.sh
 #
+# 自定义模型后端（默认使用 vLLM 本地服务）:
+#   bash jyc/scripts/run_exploration.sh \
+#       --model_backend vllm \
+#       --model_name Qwen/Qwen2.5-VL-7B-Instruct \
+#       --vllm_base_url http://localhost:8000/v1
+#
+# 使用 OpenAI API:
+#   bash jyc/scripts/run_exploration.sh \
+#       --model_backend openai \
+#       --model_name gpt-4o
+#
 set +x
 
 # =============================================
@@ -21,21 +32,80 @@ export PYTHONPATH="$ROLL_PATH:$PYTHONPATH"
 # =============================================
 EXPLORATION_OUTPUT_DIR="./exploration_output"
 INIT_OUTPUT_DIR="./init_output"
-EXPLORATION_MODEL="gpt-4o"          # 探索任务生成模型（可改为 gpt-4o-mini 等）
-INIT_MODEL="gpt-4o"                  # 任务初始化模型
+
+NUM_EPISODES="${NUM_EPISODES:-20}"
+MAX_STEPS="${MAX_STEPS:-30}"
 
 # =============================================
 # 探索参数配置
 # =============================================
-NUM_EPISODES=20          # 探索 episode 数量（建议 10-50）
-MAX_STEPS=30             # 每个 episode 最大步数
+
+# =============================================
+# VLM 模型后端配置
+# =============================================
+# 可选值: none | vllm | openai | huggingface
+MODEL_BACKEND="${MODEL_BACKEND:-vllm}"
+
+# 模型名称（根据实际部署的模型修改）
+MODEL_NAME="${MODEL_NAME:-Qwen/Qwen2.5-VL-7B-Instruct}"
+
+# vLLM / OpenAI-compatible 服务地址
+VLLM_BASE_URL="${VLLM_BASE_URL:-http://localhost:8000/v1}"
+
+# 采样参数
+MODEL_TEMPERATURE="${MODEL_TEMPERATURE:-1.0}"
+MODEL_MAX_TOKENS="${MODEL_MAX_TOKENS:-256}"
+
+# =============================================
+# 解析命令行参数
+# =============================================
+POSITIONAL_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --model_backend)
+            MODEL_BACKEND="$2"
+            shift 2
+            ;;
+        --model_name)
+            MODEL_NAME="$2"
+            shift 2
+            ;;
+        --vllm_base_url)
+            VLLM_BASE_URL="$2"
+            shift 2
+            ;;
+        --num_episodes)
+            NUM_EPISODES="$2"
+            shift 2
+            ;;
+        --max_steps)
+            MAX_STEPS="$2"
+            shift 2
+            ;;
+        --exploration_output_dir)
+            EXPLORATION_OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --init_output_dir)
+            INIT_OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        *)
+            POSITIONAL_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${POSITIONAL_ARGS[@]}"
 
 echo "============================================="
 echo "  Self-Evolve Exploration Phase"
 echo "============================================="
 echo "  Exploration output: $EXPLORATION_OUTPUT_DIR"
 echo "  Init output:        $INIT_OUTPUT_DIR"
-echo "  Model:              $EXPLORATION_MODEL"
+echo "  Model backend:      $MODEL_BACKEND"
+echo "  Model name:         $MODEL_NAME"
+echo "  vLLM base URL:      $VLLM_BASE_URL"
 echo "  Episodes:           $NUM_EPISODES"
 echo "  Max steps/ep:       $MAX_STEPS"
 echo "============================================="
@@ -43,26 +113,56 @@ echo "============================================="
 cd "$ROLL_PATH"
 
 # =============================================
-# 步骤 1：运行 Explorer
+# 步骤 1：运行 Explorer（带模型后端）
 # =============================================
 echo ""
-echo "[Step 1/2] Running Explorer..."
-echo "Command: python roll/pipeline/agentic/env/android/exploration/explorer.py"
+echo "[Step 1/2] Running Explorer with model backend: $MODEL_BACKEND"
+echo "Command: python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py"
+echo "         --env mobileworld"
+echo "         --server_url http://localhost:9000"
+echo "         --model_backend $MODEL_BACKEND"
+echo "         --model_name $MODEL_NAME"
 echo "         --output_dir $EXPLORATION_OUTPUT_DIR"
-echo "         --env_type mobileworld"
-echo "         --num_episodes $NUM_EPISODES"
-echo "         --max_steps $MAX_STEPS"
 echo ""
 
-python roll/pipeline/agentic/env/android/exploration/explorer.py \
-    --output_dir "$EXPLORATION_OUTPUT_DIR" \
-    --env_type mobileworld \
-    --num_episodes "$NUM_EPISODES" \
-    --max_steps "$MAX_STEPS"
+if [ "$MODEL_BACKEND" = "vllm" ]; then
+    python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py \
+        --env mobileworld \
+        --server_url http://localhost:9000 \
+        --model_backend vllm \
+        --model_name "$MODEL_NAME" \
+        --vllm_base_url "$VLLM_BASE_URL" \
+        --model_temperature "$MODEL_TEMPERATURE" \
+        --model_max_tokens "$MODEL_MAX_TOKENS" \
+        --output_dir "$EXPLORATION_OUTPUT_DIR" \
+        --num_episodes "$NUM_EPISODES" \
+        --max_steps "$MAX_STEPS"
+elif [ "$MODEL_BACKEND" = "openai" ]; then
+    python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py \
+        --env mobileworld \
+        --server_url http://localhost:9000 \
+        --model_backend openai \
+        --model_name "$MODEL_NAME" \
+        --model_temperature "$MODEL_TEMPERATURE" \
+        --model_max_tokens "$MODEL_MAX_TOKENS" \
+        --output_dir "$EXPLORATION_OUTPUT_DIR" \
+        --num_episodes "$NUM_EPISODES" \
+        --max_steps "$MAX_STEPS"
+else
+    # none / 随机动作
+    python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py \
+        --env mobileworld \
+        --server_url http://localhost:9000 \
+        --model_backend none \
+        --output_dir "$EXPLORATION_OUTPUT_DIR" \
+        --num_episodes "$NUM_EPISODES" \
+        --max_steps "$MAX_STEPS"
+fi
 
-if [ $? -ne 0 ]; then
+EXPLORER_EXIT=$?
+if [ $EXPLORER_EXIT -ne 0 ]; then
     echo ""
-    echo "[ERROR] Explorer failed. Please check logs above."
+    echo "[ERROR] Explorer failed with exit code $EXPLORER_EXIT. Please check logs above."
     exit 1
 fi
 
@@ -74,20 +174,21 @@ echo "[Step 1/2] Explorer completed successfully."
 # =============================================
 echo ""
 echo "[Step 2/2] Running Task Initializer..."
-echo "Command: python roll/pipeline/agentic/env/android/exploration/task_initializer.py"
+echo "Command: python roll/pipeline/agentic/env/android/exploration/scripts/run_task_init.py"
 echo "         --exploration_dir $EXPLORATION_OUTPUT_DIR"
 echo "         --init_output_dir $INIT_OUTPUT_DIR"
-echo "         --env_type mobileworld"
+echo "         --env mobileworld"
 echo ""
 
-python roll/pipeline/agentic/env/android/exploration/task_initializer.py \
+python roll/pipeline/agentic/env/android/exploration/scripts/run_task_init.py \
     --exploration_dir "$EXPLORATION_OUTPUT_DIR" \
     --init_output_dir "$INIT_OUTPUT_DIR" \
-    --env_type mobileworld
+    --env mobileworld
 
-if [ $? -ne 0 ]; then
+INIT_EXIT=$?
+if [ $INIT_EXIT -ne 0 ]; then
     echo ""
-    echo "[ERROR] Task Initializer failed. Please check logs above."
+    echo "[ERROR] Task Initializer failed with exit code $INIT_EXIT. Please check logs above."
     exit 1
 fi
 

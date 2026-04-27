@@ -48,7 +48,7 @@ checkpoint_config:
 
 
 # 批处理大小与序列长度配置
-rollout_batch_size: 32 # the rollout trajectory size，也就是一批任务的数量
+rollout_batch_size: 16 # the rollout trajectory size，也就是一批任务的数量
 val_batch_size: 40 # 2个task，每个task 10次运行
 sequence_length: 2048
 # async_generation_ratio: 0
@@ -156,7 +156,7 @@ reference:
     strategy_name: hf_infer
     strategy_config: ~
   device_mapping: list(range(1,2))
-  infer_batch_size: 16  # micro_batch_size
+  infer_batch_size: 4  # micro_batch_size
 
 
 reward_normalization:
