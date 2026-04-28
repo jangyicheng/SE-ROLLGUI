@@ -126,7 +126,7 @@ echo ""
 echo "[Step 1/2] Running Explorer with model backend: $MODEL_BACKEND"
 echo "Command: python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py"
 echo "         --env mobileworld"
-echo "         --server_url http://localhost:9000"
+echo "         --server_url http://localhost:18000"
 echo "         --model_backend $MODEL_BACKEND"
 echo "         --model_name $MODEL_NAME"
 echo "         --output_dir $EXPLORATION_OUTPUT_DIR"
@@ -135,7 +135,7 @@ echo ""
 if [ "$MODEL_BACKEND" = "vllm" ]; then
     python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py \
         --env mobileworld \
-        --server_url http://localhost:9000 \
+        --server_url http://localhost:18000 \
         --model_backend vllm \
         --model_name "$MODEL_NAME" \
         --vllm_base_url "$VLLM_BASE_URL" \
@@ -149,7 +149,7 @@ if [ "$MODEL_BACKEND" = "vllm" ]; then
 elif [ "$MODEL_BACKEND" = "openai" ]; then
     python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py \
         --env mobileworld \
-        --server_url http://localhost:9000 \
+        --server_url http://localhost:18000 \
         --model_backend openai \
         --model_name "$MODEL_NAME" \
         --model_temperature "$MODEL_TEMPERATURE" \
@@ -163,7 +163,7 @@ else
     # none / 随机动作
     python roll/pipeline/agentic/env/android/exploration/scripts/run_exploration.py \
         --env mobileworld \
-        --server_url http://localhost:9000 \
+        --server_url http://localhost:18000 \
         --model_backend none \
         --output_dir "$EXPLORATION_OUTPUT_DIR" \
         --num_episodes "$NUM_EPISODES" \

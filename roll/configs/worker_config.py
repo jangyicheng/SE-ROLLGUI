@@ -12,7 +12,15 @@ logger = get_logger()
 @dataclass
 class StrategyArguments:
     strategy_name: Literal[
-        "deepspeed_train", "hf_infer", "deepspeed_infer", "vllm", "sglang", "megatron_infer", "megatron_train", "mock_infer", "diffusion_deepspeed_train"
+        "deepspeed_train",
+        "hf_infer",
+        "deepspeed_infer",
+        "vllm",
+        "sglang",
+        "megatron_infer",
+        "megatron_train",
+        "mock_infer",
+        "diffusion_deepspeed_train",
     ] = field(
         default="deepspeed_train",
         metadata={
@@ -31,37 +39,25 @@ class WorkerConfig:
         default=None,
         metadata={"help": "name of this role."},
     )
-    worker_cls: Optional[str] = field(
-        default=None,
-        metadata={"help": "The class of the worker."}
-    )
-    pg_variant: Optional[str] = field(
-        default=None,
-        metadata={"help": "The variant of the policy gradient."}
-    )
+    worker_cls: Optional[str] = field(default=None, metadata={"help": "The class of the worker."})
+    pg_variant: Optional[str] = field(default=None, metadata={"help": "The variant of the policy gradient."})
     model_args: ModelArguments = field(
         default_factory=ModelArguments,
         metadata={"help": "The arguments for the model, encapsulated in a ModelArguments object."},
     )
     training_args: TrainingArguments = field(
-        default_factory=TrainingArguments,
-        metadata={"help": "Training-related arguments."}
+        default_factory=TrainingArguments, metadata={"help": "Training-related arguments."}
     )
     data_args: DataArguments = field(
-        default=None,
-        metadata={"help": "Data-related arguments; optional and can be None."}
+        default=None, metadata={"help": "Data-related arguments; optional and can be None."}
     )
     generating_args: GeneratingArguments = field(
-        default=None,
-        metadata={"help": "Arguments for generating output; optional and can be None."}
+        default=None, metadata={"help": "Arguments for generating output; optional and can be None."}
     )
     strategy_args: StrategyArguments = field(
-        default=None,
-        metadata={"help": "The strategy configuration, encapsulated in a StrategyArguments object."}
+        default=None, metadata={"help": "The strategy configuration, encapsulated in a StrategyArguments object."}
     )
-    world_size: int = field(
-        default=None,
-        metadata={"help": "The number of role clusters."})
+    world_size: int = field(default=None, metadata={"help": "The number of role clusters."})
     device_mapping: Union[List[int], str] = field(
         default=None,
         metadata={
@@ -70,49 +66,29 @@ class WorkerConfig:
             "If device_mapping is None, the worker uses cpu only."
         },
     )
-    num_gpus_per_worker: int = field(
-        default=1,
-        metadata={"help": "The number of gpu per worker."}
-    )
-    model_update_frequency: int = field(
-        default=1,
-        metadata={"help": "Frequency of model updates."}
-    )
+    num_gpus_per_worker: int = field(default=1, metadata={"help": "The number of gpu per worker."})
+    model_update_frequency: int = field(default=1, metadata={"help": "Frequency of model updates."})
     model_update_method: Literal["nccl", "rpc"] = field(
         default="nccl",
-        metadata={
-            "help": "The method of model updates. Options: 'nccl', 'rpc', rpc only for RTP recently."
-        },
+        metadata={"help": "The method of model updates. Options: 'nccl', 'rpc', rpc only for RTP recently."},
     )
-    infer_batch_size: int = field(
-        default=16,
-        metadata={"help": "Batch size for inference."}
-    )
-    backend_timeout: int = field(
-        default=30,
-        metadata={"help": "minutes for dist backend communicating."}
-    )
-    system_envs: dict = field(
-        default_factory=dict,
-        metadata={"help": "system environment variables for this worker."}
-    )
-    topr_positive_weight: float = field(
-        default=1.0,
-        metadata={"help": "Weight for positive samples in TOPR loss."}
-    )
-    topr_negative_weight: float = field(
-        default=1.0,
-        metadata={"help": "Weight for negative samples in TOPR loss."}
-    )
+    infer_batch_size: int = field(default=16, metadata={"help": "Batch size for inference."})
+    backend_timeout: int = field(default=30, metadata={"help": "minutes for dist backend communicating."})
+    system_envs: dict = field(default_factory=dict, metadata={"help": "system environment variables for this worker."})
+    topr_positive_weight: float = field(default=1.0, metadata={"help": "Weight for positive samples in TOPR loss."})
+    topr_negative_weight: float = field(default=1.0, metadata={"help": "Weight for negative samples in TOPR loss."})
     use_remove_padding: bool = field(
         default=False,
-        metadata={"help": "Remove tail padding token in a micro batch, don't pack sequences(different from verl). must set `variable_seq_lengths` for megatron."}
+        metadata={
+            "help": "Remove tail padding token in a micro batch, don't pack sequences(different from verl). must set `variable_seq_lengths` for megatron."
+        },
     )
-
     use_dynamic_batching_in_train: bool = field(
         default=False,
-        metadata={"help": "Dynamic batching is a feature designed to group sequences of similar lengths into batches, "
-                          "minimizing padding and improving computational and memory efficiency."}
+        metadata={
+            "help": "Dynamic batching is a feature designed to group sequences of similar lengths into batches, "
+            "minimizing padding and improving computational and memory efficiency."
+        },
     )
     max_tokens_per_microbatch_in_train: int = field(
         default=0,
@@ -122,38 +98,45 @@ class WorkerConfig:
                 "This config must be set when using dynamic batching. "
                 "Recommended value: sequence_length × 2 × micro_batch_size."
             )
-        }
+        },
     )
-    sequence_length_round_in_train:int = field(
+    sequence_length_round_in_train: int = field(
         default=4,
-        metadata={"help": "The value to round up to when truncating the sequence length."
-                          "Note: This config must be set when using dynamic batching."}
+        metadata={
+            "help": "The value to round up to when truncating the sequence length."
+            "Note: This config must be set when using dynamic batching."
+        },
     )
     use_dynamic_batching_in_infer: bool = field(
         default=False,
-        metadata={"help": "Dynamic batching is a feature designed to group sequences of similar lengths into batches, "
-                          "minimizing padding and improving computational and memory efficiency."}
+        metadata={
+            "help": "Dynamic batching is a feature designed to group sequences of similar lengths into batches, "
+            "minimizing padding and improving computational and memory efficiency."
+        },
     )
-    max_tokens_per_microbatch_in_infer:int = field(
+    max_tokens_per_microbatch_in_infer: int = field(
         default=None,
-        metadata={"help": "Set the maximum number of tokens for each micro-batch. "
-                          "Note: This config must be set when using dynamic batching."}
+        metadata={
+            "help": "Set the maximum number of tokens for each micro-batch. "
+            "Note: This config must be set when using dynamic batching."
+        },
     )
-    sequence_length_round_in_infer:int = field(
+    sequence_length_round_in_infer: int = field(
         default=4,
-        metadata={"help": "The value to round up to when truncating the sequence length."
-                          "Note: This config must be set when using dynamic batching."}
+        metadata={
+            "help": "The value to round up to when truncating the sequence length."
+            "Note: This config must be set when using dynamic batching."
+        },
     )
-    offload_nccl: bool = field(
-        default=False,
-        metadata={"help": "Whether offload nccl buffer to save gpu memory."}
-    )
+    offload_nccl: bool = field(default=False, metadata={"help": "Whether offload nccl buffer to save gpu memory."})
 
     # sequence packing
     use_sequence_packing: bool = field(
         default=False,
-        metadata={"help": "Concatenates multiple sequences into a single “packed” sequence, eliminating most padding. "
-                          "Only supported in the megatron strategy"}
+        metadata={
+            "help": "Concatenates multiple sequences into a single “packed” sequence, eliminating most padding. "
+            "Only supported in the megatron strategy"
+        },
     )
 
     def __post_init__(self):
@@ -192,6 +175,7 @@ class WorkerConfig:
                 self.training_args.bf16 = True
             elif self.model_args.dtype == "fp16":
                 self.training_args.fp16 = True
+
 
 def is_colocated(actor_train: WorkerConfig, actor_infer: WorkerConfig):
     train_devices = set(actor_train.device_mapping or [])
