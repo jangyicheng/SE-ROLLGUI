@@ -41,4 +41,10 @@ sh jyc/scripts/run_agentic_pipeline.sh
 # ssh -L 8501:localhost:8501 超算
 
 
+# ========================================================================
+apt update && apt install -y openssh-server
+/app/bin/sshdctl start
 
+source /app/bin/proxy.sh
+/app/ubuntu/bin/apt-get update
+/app/ubuntu/bin/apt-get install tmux

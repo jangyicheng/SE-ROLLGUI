@@ -332,7 +332,7 @@ python -m vllm.entrypoints.openai.api_server \
     --dtype half \
     --port 8000 \
     --gpu-memory-utilization 0.85 \
-    --max-model-len 2048
+    --max-model-len 4096
 ```
 
 > **注意**：部署时请根据实际 GPU 显存选择合适的模型（7B/14B/30B），确保 `port` 与后续配置中的 `--vllm_base_url` 一致。
@@ -463,14 +463,27 @@ python -m vllm.entrypoints.openai.api_server \
     --model Models/GUI-Owl-1.5-8B-Instruct \
     --port 8000 \
     --trust-remote-code \
-    --dtype half \
-    --gpu-memory-utilization 0.85
+    --dtype float32 \ 
+    --gpu-memory-utilization 0.9
+
+#    后台运行 dtype：'auto', 'bfloat16', 'float', 'float16', 'float32', 'half'
+nohup python -m vllm.entrypoints.openai.api_server \
+    --model /HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/Models/GUI-Owl-1.5-8B-Instruct \
+    --served-model-name GUI-Owl-1.5-8B-Instruct \
+    --trust-remote-code \
+    --dtype float32 \
+    --port 8000 \
+    --gpu-memory-utilization 0.9 \
+    --max-model-len 4096 \
+    > vllm.log 2>&1 &
+
+curl http://localhost:8000/v1/models
 
 # 3. 运行探索阶段（使用 vLLM）
 export MODEL_BACKEND=vllm
 export MODEL_NAME=Models/GUI-Owl-1.5-8B-Instruct
 export VLLM_BASE_URL=http://localhost:8000/v1
-export NUM_EPISODES=20
+export NUM_EPISODES=5
 bash jyc/scripts/run_exploration.sh
 
 # 4. 启动自进化训练

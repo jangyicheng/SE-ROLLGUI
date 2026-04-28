@@ -275,7 +275,7 @@ class AgenticPipeline(BasePipeline):
 
                     with Timer(name="cal_token_reward", logger=None) as timer:
                         # Expand compute_response_level_rewards and add kl_penalty.
-                        batch, kl_metrics = apply_kl_penalty(data=batch, kl_ctrl=self.kl_ctrl, kl_penalty=self.pipeline_config.kl_penalty)
+                        # batch, kl_metrics = apply_kl_penalty(data=batch, kl_ctrl=self.kl_ctrl, kl_penalty=self.pipeline_config.kl_penalty)
                         batch, token_level_metrics = compute_token_reward(batch, self.pipeline_config, self.kl_ctrl)
                         metrics.update(token_level_metrics)
                     metrics["time/step_cal_token_reward"] = timer.last

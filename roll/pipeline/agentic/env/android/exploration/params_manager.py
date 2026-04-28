@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from roll.utils.logging import get_logger
 
 logger = get_logger()
-
+DEFAULT_TASK_RANDOM_SEED = 42
 
 @dataclass
 class TaskParams:
@@ -54,7 +54,6 @@ class TaskParams:
 class BaseParamsManager:
     """Base class for params management."""
 
-    DEFAULT_TASK_RANDOM_SEED = 42
 
     def __init__(
         self,

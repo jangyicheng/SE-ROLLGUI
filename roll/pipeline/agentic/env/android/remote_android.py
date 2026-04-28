@@ -84,7 +84,7 @@ class RemoteAndroidEnv(TaskManagerUtilsMixin, Env):
 
         if task == "all_task":
             task_list = TASK_LIST + Information_Retrieval_TASK_LIST if self.mode == "val" else TRAIN_TASK_LIST
-            task_list = ["FilesDeleteFile", "OsmAndFavorite"] # "RecipeDeleteDuplicateRecipes","MarkorEditNote"
+            task_list = ["FilesDeleteFile"] #, "OsmAndFavorite" "RecipeDeleteDuplicateRecipes","MarkorEditNote"
             # task_list = TRAIN_TASK_LIST
             # print(f"Using all tasks for mode=train, total {len(task_list)} tasks.")
         else:

@@ -179,3 +179,4 @@ output/
 trajectories/
 reward_trajectories/
 androidworld-server/
+ckpt/
