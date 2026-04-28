@@ -92,7 +92,8 @@ class SwanlabTracker(BaseTracker):
                                 tags=tags, logdir=logdir, **kwargs)
 
     def log(self, values: dict, step: Optional[int], **kwargs):
-        self.run.log(values, step=step, **kwargs)
+        filtered = {k: v for k, v in values.items() if isinstance(v, (int, float))}
+        self.run.log(filtered, step=step, **kwargs)
 
     def finish(self):
         self.run.finish()

@@ -21,19 +21,18 @@ system_envs:
   USE_MODELSCOPE: '1'
   # ROLL_LOG_LEVEL: "DEBUG"
 metrics_dump_dir: ./output/metrics
-metrics_dump_dir: ./output/metrics
 
 track_with: swanlab
 tracker_kwargs:
-  api_key: 4FsBwIEyUhCvOwlPJyr7g
+  login_kwargs:
+    api_key: 4FsBwIEyUhCvOwlPJyr7g
   project: GUIAgent-Online-RL
-  name: ${exp_name}
-  tags: 
+  experiment_name: ${exp_name}
+  tags:
     - online_rl
     - grpo
-  group: training
   description: GUI online RL
-  log_dir: roll_exp/android
+  logdir: roll_exp/android
 
 
 # ----------------------------------------------
@@ -67,8 +66,8 @@ sequence_length: 2048
 
 # PPO算法核心参数
 enable_reference: true
-advantage_clip: 0.2
-ppo_epochs: 4
+advantage_clip: 1.0
+ppo_epochs: 1
 # GRPO core config
 adv_estimator: "grpo"
 pg_clip_high: 0.28
@@ -79,8 +78,9 @@ entropy_loss_coef: 0
 max_grad_norm: 1.0
 add_token_level_kl: true
 use_kl_loss: true
-
-
+init_kl_coef:  0.001
+kl_loss_coef: 0.01
+loss_agg_mode: "seq-mean-token-mean"
 
 # 预定义一些模型参数
 pretrain: /HOME/hitsz_xdeng/hitsz_xdeng_2/HDD_POOL/Models/${Model}

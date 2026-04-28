@@ -167,6 +167,12 @@ class AgenticPipeline(BasePipeline):
         # Calculate tokens-per-second system throughput
         tps_timer = _Timer(window_size=5)
 
+        if self.pipeline_config.metrics_dump_dir:
+            import shutil
+            if os.path.exists(self.pipeline_config.metrics_dump_dir):
+                shutil.rmtree(self.pipeline_config.metrics_dump_dir)
+            os.makedirs(self.pipeline_config.metrics_dump_dir, exist_ok=True)
+
         for global_step in range(self.pipeline_config.max_steps):
             if global_step <= self.state.step:
                 global_step += 1
